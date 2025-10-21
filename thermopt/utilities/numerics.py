@@ -1,6 +1,7 @@
 import re
 import numbers
 import numpy as np
+import jax.numpy as jnp
 import pandas as pd
 
 from collections.abc import Iterable
@@ -63,6 +64,14 @@ def is_numeric(value):
     # NumPy arrays
     if isinstance(value, np.ndarray):
         return np.issubdtype(value.dtype, np.number) and not np.issubdtype(value.dtype, np.bool_)
+
+    # JAX scalar types
+    if isinstance(value, jnp.ndarray) and value.ndim == 0:
+        return jnp.issubdtype(value.dtype, jnp.number) and not jnp.issubdtype(value.dtype, jnp.bool_)
+
+    # JAX arrays
+    if isinstance(value, jnp.ndarray):
+        return jnp.issubdtype(value.dtype, jnp.number) and not jnp.issubdtype(value.dtype, jnp.bool_)
 
     return False
 

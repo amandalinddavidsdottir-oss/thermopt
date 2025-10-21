@@ -2,6 +2,7 @@ import re
 import yaml
 import numbers
 import numpy as np
+import jax.numpy as jnp
 
 from . import numerics as num
 
@@ -65,7 +66,7 @@ def render_and_evaluate(expression, data):
         nested_key = match.group(1)
         try:
             value = render_nested_value(nested_key, data)
-            if isinstance(value, np.ndarray):
+            if isinstance(value, np.ndarray) or isinstance(value, jnp.ndarray):
                 return "np.array(" + repr(value.tolist()) + ")"
             else:
                 return repr(value)
@@ -313,7 +314,6 @@ def evaluate_constraints(data, constraints):
             # Add index if current is an array
             name_out = f"{name_expr}[{i}]" if current.size > 1 else name_expr
 
-            # print(name_out)
             output.append({
                 "name": name_out,
                 "value": curr_val,
@@ -358,9 +358,12 @@ def evaluate_objective_function(data, objective_function):
     type = objective_function["type"]
     value = render_and_evaluate(name, data)
 
-    if not np.isscalar(value):
+    # Ensure it represents a scalar
+    value = np.asarray(value)
+    if value.size != 1:
         raise ValueError(
-            f"The objective function '{name}' must be an scalar, but the value is: {value}"
+            f"The objective function '{name}' must be scalar, "
+            f"but got array with shape {value.shape} and value {value}."
         )
 
     if type == "minimize":

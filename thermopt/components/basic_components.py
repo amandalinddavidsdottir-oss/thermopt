@@ -7,7 +7,7 @@ from scipy.integrate import solve_ivp
 from .turbomachinery_nondimensional import RadialTurbine, CentrifugalCompressor
 
 import CoolProp.CoolProp as cp
-import coolpropx as props
+import jaxprop as props
 # from .. import properties as props
 
 
@@ -95,10 +95,10 @@ def heat_exchanger(
         num_steps=num_steps,
     )
 
+
     # Sort values for temperature difference calculation
     if counter_current:
-        for key, value in hot_side["states"].items():
-            hot_side["states"][key] = np.flip(value)
+        hot_side["states"] = hot_side["states"].flipped()
 
     # Compute temperature difference
     dT = hot_side["states"]["T"] - cold_side["states"]["T"]
@@ -166,23 +166,15 @@ def heat_transfer_process(fluid, h_1, p_1, h_2, p_2, num_steps=25):
     p_array = np.linspace(p_1, p_2, num_steps)
     h_array = np.linspace(h_1, h_2, num_steps)
 
-    # Initialize lists to store states for hot and cold sides
-    states = []
-
-    # Calculate states for hot side
-    for p, h in zip(p_array, h_array):
-        states.append(fluid.get_state(props.HmassP_INPUTS, h, p))
-
-    # Store inlet and outlet states
-    state_in = states[0]
-    state_out = states[-1]
+    # Compute states for hot or cold side
+    states = fluid.get_state(props.HmassP_INPUTS, h_array, p_array)
 
     # Create result dictionary
     result = {
-        "states": props.states_to_dict(states),
+        "states": states,
         "fluid_name": fluid.name,
-        "state_in": state_in,
-        "state_out": state_out,
+        "state_in": states.at_index(0),
+        "state_out": states.at_index(-1),
         "mass_flow": np.nan,
         "heat_flow": np.nan,
         "color": "black",
@@ -234,7 +226,7 @@ def compression_process(
     if efficiency_type == "isentropic":
         h_out = state_in.h + (state_out_is.h - state_in.h) / efficiency
         state_out = fluid.get_state(props.HmassP_INPUTS, h_out, p_out, supersaturation=True)
-        states = [state_in, state_out]
+        states = state_in + state_out
         data_out = {"isentropic_efficiency": efficiency}
 
     elif efficiency_type == "polytropic":
@@ -255,7 +247,7 @@ def compression_process(
 
         # Evaluate fluid properties at intermediate states
         states = postprocess_ode(sol.t, sol.y, odefun)
-        state_in, state_out = states[0], states[-1]
+        state_in, state_out = states.at_index(0), states.at_index(-1)
         data_out = {"polytropic_efficiency": efficiency}
         
     elif efficiency_type == "non-dimensional":
@@ -284,7 +276,7 @@ def compression_process(
     result = {
         "type": "compressor",
         "fluid_name": fluid.name,
-        "states": props.states_to_dict(states),
+        "states": states,
         "state_in": state_in,
         "state_out": state_out,
         "efficiency": efficiency,
@@ -342,7 +334,7 @@ def expansion_process(
         # Compute outlet state according to the definition of isentropic efficiency
         h_out = state_in.h - efficiency * (state_in.h - state_out_is.h)
         state_out = fluid.get_state(props.HmassP_INPUTS, h_out, p_out, supersaturation=True, generalize_quality=True)
-        states = [state_in, state_out]
+        states = state_in + state_out
         data_out = {"isentropic_efficiency": efficiency}
         
     elif efficiency_type == "polytropic":
@@ -363,7 +355,7 @@ def expansion_process(
 
         # Evaluate fluid properties at intermediate states
         states = postprocess_ode(sol.t, sol.y, odefun)
-        state_in, state_out = states[0], states[-1]
+        state_in, state_out = states.at_index(0), states.at_index(-1)
         data_out = {"polytropic_efficiency": efficiency}
         
     elif efficiency_type == "non-dimensional":
@@ -400,7 +392,7 @@ def expansion_process(
     result = {
         "type": "expander",
         "fluid_name": fluid.name,
-        "states": props.states_to_dict(states),
+        "states": states,
         "state_in": state_in,
         "state_out": state_out,
         "efficiency": efficiency,
@@ -444,9 +436,7 @@ def isenthalpic_valve(state_in, p_out, fluid, N=50):
     """  
     p_array = np.linspace(state_in.p, p_out, N)
     h_array = state_in.h * p_array
-    states = []
-    for p, h in zip(p_array, h_array):
-        states.append(fluid.get_state(props.HmassP_INPUTS, h, p))
+    states = fluid.get_state(props.HmassP_INPUTS, h_array, p_array)
     return states
 
 
@@ -473,12 +463,14 @@ def postprocess_ode(t, y, ode_handle):
     list
         List of thermodynamic states reconstructed from the ODE trajectory.
     """ 
-    # Collect additional properties for each integration step
-    ode_out = []
+    # Collect individual states
+    states = []
     for t_i, y_i in zip(t, y.T):
         _, state = ode_handle(t_i, y_i)
-        ode_out.append(state)
-    return ode_out
+        states.append(state)
+
+    # Combine into one batched FluidState
+    return props.FluidState.stack(states)
 
 
 def compute_component_energy_flows(components):

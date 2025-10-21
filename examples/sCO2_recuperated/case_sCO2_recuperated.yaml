@@ -151,15 +151,15 @@ problem_formulation:
   constraints:
     - variable: $components.heater.temperature_difference
       type: ">"
-      value: 20
+      value: 20.0
       normalize: True
     - variable: $components.recuperator.temperature_difference
       type: ">"
-      value: 20
+      value: 20.0
       normalize: True
     - variable: $components.cooler.temperature_difference
       type: ">"
-      value: 10
+      value: 10.0
       normalize: True
     # - variable: $components.compressor.state_in.T
     #   type: ">"

@@ -10,7 +10,7 @@ documentation = "https://github.com/turbo-sim/thermopt"
 
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.14"
+python = ">=3.11,<3.14"
 numpy = "^2.2.4"
 scipy = "^1.15.2"
 matplotlib = "^3.10.1"
@@ -20,9 +20,11 @@ PyYAML = "^6.0.2"
 toml = "^0.10.2"
 cycler = "^0.12.1"
 imageio = {extras = ["ffmpeg"], version = "^2.37.0"}
-spyder-kernels = "3.0.2"
 pysolver_view = "^0.6.2"
-coolpropx = "^0.2.8"
+#coolpropx = "^0.2.8"
+#jaxprop = "^0.4.1"
+jaxprop = { path = "../jaxprop/", develop = true }
+
 #pysolver_view = { path = "../pysolver_view/", develop = true }
 #coolpropx = { path = "../coolpropx/", develop = true }
 

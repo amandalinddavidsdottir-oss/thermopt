@@ -11,7 +11,7 @@ import yaml
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import coolpropx as cpx
+import jaxprop as cpx
 import pysolver_view as psv
 
 # Local modules
@@ -530,12 +530,19 @@ class ThermodynamicCycleProblem(psv.OptimizationProblem):
 
         # Save states in the fixed parameters dictionary
         self.params = copy.deepcopy(self.fixed_parameters)
+        # self.params["working_fluid"] = {
+        #     "critical_point": self.fluid.critical_point.to_dict(),
+        #     "triple_point_liquid": self.fluid.triple_point_liquid.to_dict(),
+        #     "triple_point_vapor": self.fluid.triple_point_vapor.to_dict(),
+        #     "liquid_at_ambient_temperature": state_sat.to_dict(),
+        #     "gas_at_maximum_temperature": state_dilute.to_dict(),
+        # }
         self.params["working_fluid"] = {
-            "critical_point": self.fluid.critical_point.to_dict(),
-            "triple_point_liquid": self.fluid.triple_point_liquid.to_dict(),
-            "triple_point_vapor": self.fluid.triple_point_vapor.to_dict(),
-            "liquid_at_ambient_temperature": state_sat.to_dict(),
-            "gas_at_maximum_temperature": state_dilute.to_dict(),
+            "critical_point": self.fluid.critical_point,
+            "triple_point_liquid": self.fluid.triple_point_liquid,
+            "triple_point_vapor": self.fluid.triple_point_vapor,
+            "liquid_at_ambient_temperature": state_sat,
+            "gas_at_maximum_temperature": state_dilute,
         }
 
     def fitness(self, x):
@@ -699,7 +706,7 @@ class ThermodynamicCycleProblem(psv.OptimizationProblem):
                 f"Iterative thermodynamic cycle configuration", fontsize=14, y=0.95
             )
 
-            # # Write optimization report to file
+            # Write optimization report to file
             # if write_report:
             #     report = self.make_optimization_report(self.x0)
             #     filename="initial_guess_report.txt"
@@ -882,7 +889,7 @@ class ThermodynamicCycleProblem(psv.OptimizationProblem):
             is_heat_exchanger = False
 
         # Retrieve data
-        is_working_fluid = data["states"]["identifier"][0] == "working_fluid"
+        is_working_fluid = data["states"]["identifier"] == "working_fluid"
         if (
             not is_working_fluid
             and is_heat_exchanger

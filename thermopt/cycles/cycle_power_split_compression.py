@@ -1,5 +1,5 @@
 import copy
-import coolpropx as cpx
+import jaxprop as cpx
 
 from .. import utilities
 
