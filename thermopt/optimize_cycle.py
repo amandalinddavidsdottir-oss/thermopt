@@ -216,6 +216,7 @@ class ThermodynamicCycleOptimization:
         """
         filename = os.path.join(self.out_dir, "optimal_solution")
         self.problem.save_data_to_excel(filename=filename + ".xlsx")
+        print("hey")
         self.problem.save_current_configuration(filename=filename + ".yaml")
         self.print_convergence_history(savefile=True)
         self.print_optimization_report(savefile=True)
@@ -1159,34 +1160,36 @@ class ThermodynamicCycleProblem(psv.OptimizationProblem):
             headers.append(variable_map[key]["name"])
             units_row.append(variable_map[key]["unit"])
 
+        print(self.cycle_data["components"]["heater"]["hot_side"]["state_in"].to_dict())
+
         # Iterate over each component in the dictionary
         for component_name, component in self.cycle_data["components"].items():
             if component["type"] == "heat_exchanger":
                 # Handle heat exchanger sides separately
                 for side in ["hot_side", "cold_side"]:
                     # Append the data for state_in and state_out to the rows list
-                    state_in = component[side]["state_in"].to_dict()
-                    state_out = component[side]["state_out"].to_dict()
+                    state_in = component[side]["state_in"]
+                    state_out = component[side]["state_out"]
                     data_rows.append(
                         [f"{component_name}_{side}_in"]
-                        + [state_in.get(key, None) for key in variable_map]
+                        + [state_in[key] for key in variable_map]
                     )
                     data_rows.append(
                         [f"{component_name}_{side}_out"]
-                        + [state_out.get(key, None) for key in variable_map]
+                        + [state_out[key] for key in variable_map]
                     )
             else:
                 # Handle non-heat exchanger components
                 # Append the data for state_in and state_out to the rows list
-                state_in = component["state_in"].to_dict()
-                state_out = component["state_out"].to_dict()
+                state_in = component["state_in"]
+                state_out = component["state_out"]
                 data_rows.append(
                     [f"{component_name}_in"]
-                    + [state_in.get(key, None) for key in variable_map]
+                    + [state_in[key] for key in variable_map]
                 )
                 data_rows.append(
                     [f"{component_name}_out"]
-                    + [state_out.get(key, None) for key in variable_map]
+                    + [state_out[key] for key in variable_map]
                 )
 
         # Create a DataFrame with data rows
@@ -1196,14 +1199,6 @@ class ThermodynamicCycleProblem(psv.OptimizationProblem):
         df.loc[-1] = units_row  # Adding a row
         df.index = df.index + 1  # Shifting index
         df = df.sort_index()  # Sorting by index
-
-        # # Export to Excel
-        # df.to_excel(
-        #     os.path.join(self.out_dir, filename),
-        #     index=False,
-        #     header=True,
-        #     sheet_name="cycle_states",
-        # )
 
         # Prepare energy_analysis data
         df_2 = pd.DataFrame(
