@@ -26,48 +26,53 @@ python -c "import thermopt; thermopt.print_package_info()"
 
 This guide walks you through installation for development using `Poetry`, which manages both dependencies and virtual environments automatically.
 
-1. **Install Poetry**  
+
+1. **Install Poetry package manager**
    Follow the official guide: [Poetry Installation](https://python-poetry.org/docs/#installation)  
    Then verify the installation:
    ```bash
    poetry --version
    ```
 
-2. **Clone the repository**
+2. **Clone the repository from GitHub**
    ```bash
-   git clone https://github.com/turbo-sim/thermopt
+   git clone https://github.com/turbo-sim/thermopt.git
+   ```
+
+3. **Navigate to the project directory**
+   
+   ```bash
    cd thermopt
    ```
 
-3. **Install dependencies and create a virtual environment**  
-   This installs all required packages listed in `pyproject.toml`:
+4. **Install the package using Poetry**
+   
    ```bash
    poetry install
    ```
 
-4. **Activate the virtual environment**
-   ```bash
-   poetry shell
-   ```
-   To deactivate:
-   ```bash
-   exit
-   ```
-
-5. **Verify the installation**  
-   Run the following inside the Poetry shell or with `poetry run`:
+5. **Verify the installation**
+   
    ```bash
    poetry run python -c "import thermopt; thermopt.print_package_info()"
    ```
-
-6. **Install additional packages**  
-   To add a runtime dependency:
-   ```bash
-   poetry add <package-name>
+   
+   If the installation was successful, you should see output similar to:
+   
    ```
-   To add a development-only dependency:
-   ```bash
-   poetry add --dev <package-name>
+   --------------------------------------------------------------------------------
+         ________                        ____        __
+        /_  __/ /_  ___  _________ ___  / __ \____  / /_
+         / / / __ \/ _ \/ ___/ __ `__ \/ / / / __ \/ __/
+        / / / / / /  __/ /  / / / / / / /_/ / /_/ / /_
+       /_/ /_/ /_/\___/_/  /_/ /_/ /_/\____/ .___/\__/
+                                          /_/
+   --------------------------------------------------------------------------------
+   --------------------------------------------------------------------------------
+    Version:       0.2.2
+    Repository:    https://github.com/turbo-sim/thermopt
+    Documentation: https://turbo-sim.github.io/thermopt/
+   --------------------------------------------------------------------------------
    ```
 
 
