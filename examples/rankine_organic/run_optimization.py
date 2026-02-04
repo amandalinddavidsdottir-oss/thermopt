@@ -5,11 +5,11 @@ import matplotlib.pyplot as plt
 th.print_package_info()
 
 # Define configuration filename
-# config_files = ["./case_butane_ORC.yaml"]
+config_files = ["./case_butane_ORC.yaml"]
 # config_files = ["./case_butane_PEORC.yaml"]
 # config_files = ["./case_butane_transcritical.yaml"]
 # config_files = ["./case_butane_ORC.yaml", "./case_butane_PEORC.yaml","./case_butane_transcritical.yaml"]
-config_files = ["./case_Novec649_PEORC.yaml"]
+# config_files = ["./case_Novec649_PEORC.yaml"]
 
 # Loop over all cases
 for config in config_files:

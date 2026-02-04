@@ -1160,8 +1160,6 @@ class ThermodynamicCycleProblem(psv.OptimizationProblem):
             headers.append(variable_map[key]["name"])
             units_row.append(variable_map[key]["unit"])
 
-        print(self.cycle_data["components"]["heater"]["hot_side"]["state_in"].to_dict())
-
         # Iterate over each component in the dictionary
         for component_name, component in self.cycle_data["components"].items():
             if component["type"] == "heat_exchanger":

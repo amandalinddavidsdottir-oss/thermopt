@@ -7,7 +7,7 @@ except ImportError:
     pass
 else:
     import sys
-    sys.excepthook = IPython.core.ultratb.FormattedTB(color_scheme='linux', call_pdb=False)
+    sys.excepthook = IPython.core.ultratb.FormattedTB(call_pdb=False)
 
 # Import submodules
 # from .math import *
