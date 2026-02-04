@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "thermopt"
-version = "0.2.2"
+version = "0.2.3"
 description = "A Python tool for the analysis and optimization of thermodynamic cycles."
 authors = ["Roberto Agromayor"]
 license = "MIT"

@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.abspath(".."))
 project = "thermopt"
 copyright = "2025, Sustainable Thermal Power DTU"
 author = "Roberto Agromayor"
-release = "v0.2.2"
+release = "v0.2.3"
 
 # Define extensions
 extensions = [
