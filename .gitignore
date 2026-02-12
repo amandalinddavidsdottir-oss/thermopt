@@ -1,41 +1,62 @@
-# Distribution / packaging
+# =========================
+# Python / Packaging
+# =========================
 .Python
 build/
-develop-eggs/
 dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
 *.egg-info/
-.installed.cfg
 *.egg
 MANIFEST
 
-# Compiled Python files
+# =========================
+# Compiled Python
+# =========================
 __pycache__/
 *.pyc
 *.pyo
 
-# Visual Studio Code specific
-.vscode/         # VS Code settings and cache
-settings.json    # VS Code settings file
-*.code-workspace # VS Code workspace file
+# =========================
+# Virtual Environments
+# =========================
+.venv/
+.env
+venv/
 
-# Other
+# =========================
+# IDEs
+# =========================
+.vscode/
+.idea/
+*.code-workspace
+
+# =========================
+# Caches / Testing
+# =========================
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+
+# =========================
+# Logs / Temp
+# =========================
 *.log
 *.tmp
 *.bak
-.DS_Store       # Mac OS X desktop services store
-*.swp           # Vim swap files
+*.swp
+*.bak~
 
-# Sphinx generated files
+# =========================
+# OS Files
+# =========================
+.DS_Store
+
+# =========================
+# Sphinx
+# =========================
 _build/
 docs/_build/
 docs/.doctrees/
@@ -43,30 +64,19 @@ docs/.buildinfo
 .doctrees/
 environment.pickle
 
-
-# Jupyter Notebook checkpoints
+# =========================
+# Jupyter
+# =========================
 .ipynb_checkpoints/
 
-# Generated LaTeX files
-*.latex
-
-# Other common directories and files
-*.log
-*.bak
-*.swp
-*.bak~
-*.cache
-*.tmp
-*.~lock.*
-
-# Environment directories
-.env
-venv/
-
-
-# Results folders
-**/output/
+# =========================
+# Results / Outputs
+# =========================
+results/
 **/results/
-**/results*/
+**/output/
 
-**/assignments/
+# =========================
+# Archive
+# =========================
+_ARCHIVE/
