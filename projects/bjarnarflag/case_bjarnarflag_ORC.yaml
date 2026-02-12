@@ -1,0 +1,216 @@
+solver_options: 
+  library: scipy
+  method: slsqp
+  derivative_method: 2-point 
+  derivative_abs_step: 1e-6
+  print_convergence: True 
+  plot_convergence: False
+  logger: None
+  update_on: gradient
+  tolerance: 1e-6 
+  max_iterations: 200
+  problem_scale: 20
+  callbacks:
+    save_plot: True
+    save_config: True
+    save_report: True
+    plot_cycle: True
+    plot_convergence: False
+
+
+problem_formulation:
+
+  cycle_topology: simple
+
+  plot_settings:
+    pinch_point_diagram: False
+    fluid: 
+      plot_saturation_line: True
+      plot_critical_point: True
+      plot_quality_isolines: True
+      plot_pseudocritical_line: False
+      plot_triple_point_liquid: False
+      plot_triple_point_vapor: False
+    diagrams:
+      - x_prop: s
+        y_prop: T
+        x_scale: linear
+        y_scale: linear
+
+
+  fixed_parameters:
+
+    # ==========================================================================
+    # WORKING FLUID
+    # Toluene: T_crit = 318.6°C, P_crit = 41.26 bar
+    # Good thermal stability up to ~300°C
+    # Suitable for high-temperature geothermal ORC (207°C heat source)
+    # ==========================================================================
+    working_fluid:
+      name: Pentane
+      backend: HEOS
+      exceptions: True
+
+    # ==========================================================================
+    # HEAT SOURCE: Bjarnarflag Geothermal Brine
+    # Calculated from well data using brine mixing code
+    # ==========================================================================
+    heating_fluid:
+        name: water
+        backend: HEOS
+        exceptions: True
+
+    # ==========================================================================
+    # COOLING FLUID
+    # ==========================================================================
+    cooling_fluid:
+      name: water
+      backend: HEOS
+      exceptions: True
+
+    # ==========================================================================
+    # TARGET POWER OUTPUT
+    # ==========================================================================
+    net_power: 45e6  # 45 MW
+
+    # ==========================================================================
+    # SPECIAL POINTS
+    # ==========================================================================
+    special_points:
+      ambient_pressure: 101325  
+      ambient_temperature: 20.0 + 273.15
+      maximum_temperature: 178.1 + 273.15  # Brine inlet temperature
+
+    # ==========================================================================
+    # HEAT SOURCE: Bjarnarflag Brine Parameters
+    # --------------------------------------------------------------------------
+    # Source: Brine mixing calculation v4 (Professor's method)
+    #         Calculated from WHP, Total Flow, and Enthalpy using steam tables
+    #
+    # Original (4 wells combined):
+    #   Mass flow:    81.54 kg/s
+    #   Temperature:  178.1 °C (saturated liquid at system pressure)
+    #   Pressure:     18.01 bar-a (17.0 bar-g)
+    #   Enthalpy:     766.2 kJ/kg
+    #   Q_available:  27.94 MW_th (to 100°C reinjection)
+    #
+    # Scaled (for 45 MW_e target):
+    #   At ~16% cycle efficiency: W_net = 27.94 × 0.16 = 4.47 MW_e
+    #   Scaling factor: 45 / 4.47 = 10.07
+    #   Scaled mass flow: 81.54 × 10.07 = 821 kg/s
+    #   NOTE: Scaling factor will be updated based on actual optimization results
+    #
+    # ==========================================================================
+    heat_source:
+      inlet_temperature: 178.1 + 273.15      # 178.1 °C - brine inlet (saturated liquid)
+      minimum_temperature: 100.0 + 273.15    # 100 °C - minimum reinjection temperature
+      inlet_pressure: 18.01*101325           # 18.01 bar-a
+      exit_pressure: 18.01*101325            # Assuming constant pressure through HX
+
+    # ==========================================================================
+    # HEAT SINK (Cooling Water)
+    # TODO: Update with actual Bjarnarflag cooling conditions
+    # ==========================================================================
+    heat_sink:
+      inlet_temperature: 20 + 273.15   # TODO: Update with actual cooling water temp
+      inlet_pressure: 101325
+      exit_pressure: 101325
+
+    # ==========================================================================
+    # HEAT EXCHANGERS
+    # ==========================================================================
+    heater:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+
+    cooler:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+
+    # ==========================================================================
+    # TURBOMACHINERY
+    # ==========================================================================
+    expander:
+      efficiency: 0.90
+      efficiency_type: "isentropic"
+
+    compressor:
+      efficiency: 0.85
+      efficiency_type: "isentropic"
+
+    heat_source_pump:
+      efficiency: 0.80
+      efficiency_type: "isentropic"
+
+    heat_sink_pump:
+      efficiency: 0.80
+      efficiency_type: "isentropic"
+
+
+  # ============================================================================
+  # DESIGN VARIABLES
+  # ============================================================================
+  design_variables:
+    heat_source_exit_temperature:
+      min: 100.0 + 273.15    # Minimum reinjection temperature
+      max: 178.1 + 273.15    # Brine inlet temperature
+      value: 130.0 + 273.15  # Initial guess
+
+    heat_sink_exit_temperature:
+      min: 25 + 273.15
+      max: 35 + 273.15
+      value: 30 + 273.15
+
+    compressor_inlet_pressure:
+      min: 0.9*$working_fluid.liquid_at_ambient_temperature.p
+      max: 3.0*$working_fluid.liquid_at_ambient_temperature.p
+      value: 2*$working_fluid.liquid_at_ambient_temperature.p
+
+    compressor_inlet_enthalpy:
+      min: 0.0*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      max: 0.5*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      value: 0.1*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+
+    expander_inlet_pressure:
+      min: 0.1*$working_fluid.triple_point_vapor.p
+      max: 3.0*$working_fluid.critical_point.p
+      value: 0.5*$working_fluid.critical_point.p
+
+    expander_inlet_enthalpy:
+      min: 0.20*$working_fluid.gas_at_maximum_temperature.h
+      max: 1.00*$working_fluid.gas_at_maximum_temperature.h
+      value: 0.90*$working_fluid.gas_at_maximum_temperature.h
+
+
+  # ============================================================================
+  # CONSTRAINTS
+  # ============================================================================
+  constraints:
+    - variable: $components.heater.temperature_difference
+      type: ">"
+      value: 5
+      normalize: True
+
+    - variable: $components.cooler.temperature_difference
+      type: ">"
+      value: 5
+      normalize: True
+
+    - variable: $components.compressor.state_in.subcooling
+      type: ">"
+      value: 1.0
+      normalize: True
+
+    - variable: $components.expander.state_in.superheating
+      type: ">"
+      value: 5
+
+
+  # ============================================================================
+  # OBJECTIVE FUNCTION
+  # ============================================================================
+  objective_function:
+    variable: $energy_analysis.system_efficiency
+    type: maximize

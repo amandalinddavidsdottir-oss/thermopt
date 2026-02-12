@@ -1,0 +1,221 @@
+# ==========================================================================
+# BJARNARFLAG ORC - CYCLOHEXANE
+# ==========================================================================
+# Bounds from successful fluid sweep optimization
+# η_sys = 18.25%, Tc = 280.5°C (dry fluid)
+# ==========================================================================
+
+solver_options: 
+  library: scipy
+  method: slsqp
+  derivative_method: 2-point 
+  derivative_abs_step: 1e-6
+  print_convergence: True 
+  plot_convergence: False
+  logger: None
+  update_on: gradient
+  tolerance: 1e-6 
+  max_iterations: 200
+  problem_scale: 20
+  callbacks:
+    save_plot: True
+    save_config: True
+    save_report: True
+    plot_cycle: True
+    plot_convergence: False
+
+
+problem_formulation:
+
+  cycle_topology: simple
+
+  plot_settings:
+    pinch_point_diagram: False
+    fluid: 
+      plot_saturation_line: True
+      plot_critical_point: True
+      plot_quality_isolines: True
+      plot_pseudocritical_line: False
+      plot_triple_point_liquid: False
+      plot_triple_point_vapor: False
+    diagrams:
+      - x_prop: s
+        y_prop: T
+        x_scale: linear
+        y_scale: linear
+
+
+  fixed_parameters:
+
+    # ==========================================================================
+    # WORKING FLUID - CYCLOHEXANE
+    # ==========================================================================
+    working_fluid:
+      name: CycloHexane
+      backend: HEOS
+      exceptions: True
+
+    # ==========================================================================
+    # HEAT SOURCE / SINK FLUIDS
+    # ==========================================================================
+    heating_fluid:
+      name: water
+      backend: HEOS
+      exceptions: True
+
+    cooling_fluid:
+      name: water
+      backend: HEOS
+      exceptions: True
+
+    # ==========================================================================
+    # TARGET POWER OUTPUT
+    # ==========================================================================
+    net_power: 45e6
+
+    # ==========================================================================
+    # SPECIAL POINTS - this gives some reference points to guide our thinking - not used directly in the cycle calculations
+    # ==========================================================================
+    special_points:
+      ambient_pressure: 101325
+      ambient_temperature: 293.15
+      maximum_temperature: 451.25 #This is set as the same as heat source inlet
+
+    # ==========================================================================
+    # HEAT SOURCE: Bjarnarflag Brine
+    # ==========================================================================
+    heat_source:
+      inlet_temperature: 451.25 #Temp of geothermal brine
+      minimum_temperature: 373.15 #The reinjection temperature
+      inlet_pressure: 1824863.25 #Pressure of the brine
+      exit_pressure: 1824863.25
+
+    # ==========================================================================
+    # HEAT SINK
+    # ==========================================================================
+    heat_sink:
+      inlet_temperature: 293.15
+      inlet_pressure: 101325
+      exit_pressure: 101325
+
+    # ==========================================================================
+    # HEAT EXCHANGERS
+    # ==========================================================================
+    heater:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+
+    cooler:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+
+    # ==========================================================================
+    # TURBOMACHINERY
+    # ==========================================================================
+    expander:
+      efficiency: 0.90
+      efficiency_type: isentropic
+
+    compressor:
+      efficiency: 0.85
+      efficiency_type: isentropic
+
+    heat_source_pump:
+      efficiency: 0.80
+      efficiency_type: isentropic
+
+    heat_sink_pump:
+      efficiency: 0.80
+      efficiency_type: isentropic
+
+
+  # ============================================================================
+  # DESIGN VARIABLES - These variables are the free variables that the optimizer can change to optimize the efficiency!
+  # those variables have a starting point, and a minimum and maximum values that is allowed.
+  # ============================================================================
+  design_variables:
+    heat_source_exit_temperature: #This is related to the reinjection temperature limit
+      min: 373.15 #this is 100 for example
+      max: 446.25 #This is the temperature of the brine entering
+      value: 373.15
+
+    heat_sink_exit_temperature: #This is often a problem if the brine is going into a lake or river
+      min: 296.15 #i.e. can be set to 10°C ----> this depends on the inlet value into the condenser though
+      max: 308.15 # i.e. 10°C higher than the min value
+      value: 296.15
+
+    compressor_inlet_pressure: #This is pump
+      min: 0.9*$working_fluid.liquid_at_ambient_temperature.p
+      max: 3.0*$working_fluid.liquid_at_ambient_temperature.p
+      value: 2*$working_fluid.liquid_at_ambient_temperature.p #Pump Inlet pressure 
+
+    compressor_inlet_enthalpy: #This is pump
+      min: 0.1*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      max:  0.5*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      value: 0.2*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h #Pump inlet enthalpy
+    
+    expander_inlet_pressure: #Turbine inlet pressure
+      min: 0.1*$working_fluid.triple_point_vapor.p #Here I am setting a very low pressure by multiplying the triple point vapor pressure with 0.1
+      max: 3.0*$working_fluid.critical_point.p #Here I am setting it very high, 3 times the triple point vapor - so the optimizer can go everywhere between these two bounds and optimize
+      value: 0.5*$working_fluid.critical_point.p #I am starting somewhere in the middle of this huge range
+
+    expander_inlet_enthalpy: #Turbine inlet enthalpy
+      min: 0.20*$working_fluid.gas_at_maximum_temperature.h 
+      max: 1.00*$working_fluid.gas_at_maximum_temperature.h #what will be the enthalpy at the maximum temperature state, so this is reasonable upper bound (regardless of working fluid)
+      value: 0.90*$working_fluid.gas_at_maximum_temperature.h
+
+
+# compressor_inlet_pressure: #This is pump
+#       min: 12367.92
+#       max: 38080.55
+#       value: 14434.67 #Pump Inlet pressure 
+
+#     compressor_inlet_enthalpy: #This is pump
+#       min: -141055.66
+#       max: -63083.12
+#       value: -108614.27 #Pump inlet enthalpy
+
+#     expander_inlet_pressure: #Turbine inlet pressure
+#       min: 51935.77
+#       max: 856017.04
+#       value: 344007.85
+
+#     expander_inlet_enthalpy: #Turbine inlet enthalpy
+#       min: 327133.17
+#       max: 502617.20
+#       value: 441847.72
+
+
+
+  # ============================================================================
+  # CONSTRAINTS - This is used by the optimizer, needs to fullfil
+  # ============================================================================
+  constraints:
+    - variable: $components.heater.temperature_difference
+      type: ">"
+      value: 5
+      normalize: True
+
+    - variable: $components.cooler.temperature_difference
+      type: ">"
+      value: 5
+      normalize: True
+
+    - variable: $components.compressor.state_in.subcooling #It is requiring it to have subcooling at the inlet of the pump, so it isn't two-phased
+      type: ">"
+      value: 1.0
+      normalize: True
+
+    - variable: $components.expander.state_in.superheating
+      type: ">"
+      value: 5
+
+
+  # ============================================================================
+  # OBJECTIVE FUNCTION
+  # ============================================================================
+  objective_function:
+    variable: $energy_analysis.system_efficiency
+    type: maximize
