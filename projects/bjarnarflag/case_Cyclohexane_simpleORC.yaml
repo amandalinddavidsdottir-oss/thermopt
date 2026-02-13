@@ -1,0 +1,230 @@
+solver_options: 
+  library: scipy
+  method: slsqp
+  derivative_method: 2-point 
+  derivative_abs_step: 1e-6
+  print_convergence: True 
+  plot_convergence: False
+  logger: None
+  update_on: gradient
+  tolerance: 1e-6 
+  max_iterations: 200
+  problem_scale: 20
+  callbacks:
+    save_plot: True
+    save_config: True
+    save_report: True
+    plot_cycle: True
+    plot_convergence: False
+
+
+problem_formulation:
+
+  cycle_topology: simple
+
+  plot_settings:
+    pinch_point_diagram: False
+    fluid: 
+      plot_saturation_line: True
+      plot_critical_point: True
+      plot_quality_isolines: True
+      plot_pseudocritical_line: False
+      plot_triple_point_liquid: False
+      plot_triple_point_vapor: False
+    diagrams:
+      - x_prop: s
+        y_prop: T
+        x_scale: linear
+        y_scale: linear
+
+
+  fixed_parameters:
+
+    working_fluid:
+      name: CycloHexane
+      backend: HEOS
+      exceptions: True
+
+    heating_fluid:
+        name: water
+        backend: HEOS
+        exceptions: True
+
+    cooling_fluid:
+      name: water
+      backend: HEOS
+      exceptions: True
+
+    # ==========================================================================
+    # TARGET POWER OUTPUT
+    # ==========================================================================
+    net_power: 45e6
+    #net_power: 5e6
+    
+    # ==========================================================================
+    # SPECIAL POINTS - this gives some reference points to guide our thinking - not used directly in the cycle calculations
+    # ==========================================================================
+    special_points:
+      ambient_pressure: 101325  
+      ambient_temperature: 20.0 + 273.15
+      maximum_temperature: 470
+      #maximum_temperature: 480.25 #This is set as the same as heat source inlet
+    
+    # ==========================================================================
+    # HEAT SOURCE: Bjarnarflag Brine
+    # ==========================================================================
+    heat_source:
+      inlet_temperature: 480.25 #Temp of geothermal brine
+      minimum_temperature: 373.15 #The reinjection temperature
+      inlet_pressure: 1801000 #Pressure of the brine
+      exit_pressure: 1801000 #Pressure of the brine
+    
+    # ==========================================================================
+    # HEAT SINK
+    # ==========================================================================
+    heat_sink:
+      inlet_temperature: 293.15
+      inlet_pressure: 101325
+      exit_pressure: 101325
+
+    # ==========================================================================
+    # HEAT EXCHANGERS
+    # ==========================================================================
+    heater:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+
+    cooler:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+
+    # ==========================================================================
+    # Turbine/Compressor/Pumps
+    # ==========================================================================
+    expander:
+      efficiency: 0.90
+      efficiency_type: "isentropic"
+
+    compressor:
+      efficiency: 0.85
+      efficiency_type: "isentropic"
+
+    heat_source_pump:
+      efficiency: 0.80
+      efficiency_type: "isentropic"
+
+    heat_sink_pump:
+      efficiency: 0.80
+      efficiency_type: "isentropic"
+
+
+  # ============================================================================
+  # DESIGN VARIABLES - These variables are the free variables that the optimizer can change to optimize the efficiency!
+  # those variables have a starting point, and a minimum and maximum values that is allowed.
+  # ============================================================================
+  design_variables:
+    heat_source_exit_temperature: #This is related to the reinjection temperature limit
+      min: 373.15 #this is 100 for example
+      max: 465.25                   # 480.25 - X K  (i.e., 202.1°C)
+      value: 373.15
+
+    heat_sink_exit_temperature: #This is often a problem if the brine is going into a lake or river
+      min: 298.15 # force at least 5°C rise (25°C exit)
+      max: 308.15 # i.e. 10°C higher than the min value
+      value: 293.15
+
+    compressor_inlet_pressure: #This is pump
+      min: 0.9*$working_fluid.liquid_at_ambient_temperature.p
+      max: 3.0*$working_fluid.liquid_at_ambient_temperature.p
+      value: 1.5*$working_fluid.liquid_at_ambient_temperature.p #Pump Inlet pressure 
+
+    compressor_inlet_enthalpy: #This is pump
+      min: 0.01*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      max:  0.15*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      value: 0.01*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h #Pump inlet enthalpy
+    
+    expander_inlet_pressure: #Turbine inlet pressure
+      min: 0.05*$working_fluid.triple_point_vapor.p #Here I am setting a very low pressure by multiplying the triple point vapor pressure with 0.1
+      max: 0.15*$working_fluid.critical_point.p #Here I am setting it very high, 3 times the triple point vapor - so the optimizer can go everywhere between these two bounds and optimize
+      value: 0.10*$working_fluid.critical_point.p #I am starting somewhere in the middle of this huge range
+
+
+    expander_inlet_enthalpy: #Turbine inlet enthalpy
+      min: 0.80*$working_fluid.gas_at_maximum_temperature.h 
+      max: 1*$working_fluid.gas_at_maximum_temperature.h #what will be the enthalpy at the maximum temperature state, so this is reasonable upper bound (regardless of working fluid)
+      value: 0.95*$working_fluid.gas_at_maximum_temperature.h
+
+
+
+
+  # ============================================================================
+  # CONSTRAINTS - This is used by the optimizer, needs to fullfil
+  # ============================================================================
+  constraints:
+    - variable: $components.heater.temperature_difference
+      type: ">"
+      value: 5
+      normalize: True
+
+    - variable: $components.cooler.temperature_difference
+      type: ">"
+      #value: 5
+      value: 8        # was 5 — gives ~3 K buffer bc otherwise it was just at 3.2 instead of 5
+      normalize: True
+
+
+    - variable: $components.compressor.state_in.subcooling
+      type: ">"
+      value: 1.0
+      normalize: True
+
+    - variable: $components.expander.state_in.superheating
+      type: ">"
+      value: 5
+
+
+      ### I just added these contraints
+
+
+
+    - variable: $components.expander.state_in.T
+      type: "<"
+      value: 470
+      normalize: True
+
+
+    # - variable: $components.recuperator.temperature_difference
+    #   type: ">"
+    #   value: 10
+
+    # - variable: $components.expander.state_in.p
+    #   type: "<"
+    #   value: 250e5
+
+    # - variable: $components.compressor.state_in.Q
+    #   type: "<"
+    #   value: 0.01
+
+    # - variable: $components.expander.state_in.Q
+    #   type: "<"
+    #   value: 0.7
+
+
+
+    # - variable: $components.expander.state_out.superheating
+    #   type: ">"
+    #   value: 1
+
+
+  # ============================================================================
+  # OBJECTIVE FUNCTION
+  # ============================================================================
+  objective_function:
+    variable: $energy_analysis.system_efficiency
+    type: maximize
+
+
+
+

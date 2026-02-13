@@ -2,12 +2,13 @@ import thermopt as th
 import matplotlib.pyplot as plt
 from pathlib import Path
 
+
 # Print package info
 th.print_package_info()
 
 # Define configuration filename
 HERE = Path(__file__).resolve().parent
-config_files = [str(HERE / "case_butane_ORC.yaml")]
+config_files = [str(HERE / "case_Cyclohexane_ORC_prufa.yaml")]
 #config_files = ["./case_butane_ORC.yaml"]
 # config_files = ["./case_butane_PEORC.yaml"]
 # config_files = ["./case_butane_transcritical.yaml"]
