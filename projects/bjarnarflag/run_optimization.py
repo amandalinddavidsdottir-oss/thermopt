@@ -55,7 +55,10 @@ exergy = perform_exergy_analysis(cycle, config_file=CONFIG_FILE)
 exergy.print_summary()
 exergy.to_excel(os.path.join(graph_dir, "exergy_results.xlsx"))
 exergy.plot_exergy_destruction(savefig=os.path.join(graph_dir, "exergy_bar.png"))
-exergy.plot_pie_chart(savefig=os.path.join(graph_dir, "exergy_pie.png"))
+try:
+    exergy.plot_pie_chart(savefig=os.path.join(graph_dir, "exergy_pie.png"))
+except ValueError as e:
+    print(f"Skipping exergy pie chart: {e}")
 exergy.plot_grassmann(savefig=os.path.join(graph_dir, "exergy_grassmann.png"))
 
 # Heat source utilization curve

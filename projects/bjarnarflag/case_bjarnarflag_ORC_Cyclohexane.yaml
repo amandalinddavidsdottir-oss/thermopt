@@ -79,16 +79,16 @@ problem_formulation:
     special_points:
       ambient_pressure: 101325
       ambient_temperature: 293.15
-      maximum_temperature: 451.25 #This is set as the same as heat source inlet
+      maximum_temperature: 480.25 #This is set as the same as heat source inlet
 
     # ==========================================================================
     # HEAT SOURCE: Bjarnarflag Brine
     # ==========================================================================
     heat_source:
-      inlet_temperature: 451.25 #Temp of geothermal brine
+      inlet_temperature: 480.25 #Temp of geothermal brine
       minimum_temperature: 373.15 #The reinjection temperature
-      inlet_pressure: 1824863.25 #Pressure of the brine
-      exit_pressure: 1824863.25
+      inlet_pressure: 1801000 #Pressure of the brine
+      exit_pressure: 1801000
 
     # ==========================================================================
     # HEAT SINK
@@ -138,7 +138,7 @@ problem_formulation:
   design_variables:
     heat_source_exit_temperature: #This is related to the reinjection temperature limit
       min: 373.15 #this is 100 for example
-      max: 446.25 #This is the temperature of the brine entering
+      max: 480.25 #This is the temperature of the brine entering
       value: 373.15
 
     heat_sink_exit_temperature: #This is often a problem if the brine is going into a lake or river

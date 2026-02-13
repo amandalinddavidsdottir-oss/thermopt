@@ -348,6 +348,15 @@ class ExergyResults:
             names.append(name.replace("_", " ").title())
             E_D_vals.append(data["E_D"] / 1e3)
 
+        # Matplotlib requires non-negative wedge sizes. Exergy destruction should be >= 0,
+        # but we guard against sign-convention issues and numerical noise.
+        E_D_vals = np.asarray(E_D_vals, dtype=float)
+        mask = E_D_vals > 0
+        if not np.any(mask):
+            raise ValueError("No positive exergy destruction values available for pie chart.")
+        E_D_vals = E_D_vals[mask]
+        names = [n for n, keep in zip(names, mask) if keep]
+
         colors = plt.cm.Set2(np.linspace(0, 1, len(names)))
 
         fig, ax = plt.subplots(figsize=figsize)
@@ -639,8 +648,17 @@ def perform_exergy_analysis(cycle_object, config_file=None, T0=None, p0=None):
     # ---- 6c. Heater (heat source HX) ----------------------------------------
     htr = components["heater"]
     m_hf = htr["hot_side"]["mass_flow"]
-    e_htr_hot_in = e_hf(htr["hot_side"]["state_in"])
-    e_htr_hot_out = e_hf(htr["hot_side"]["state_out"])
+    # ThermOpt may align hot/cold-side "in/out" states for counter-current HX plotting.
+    # For exergy accounting we want physical inlet/outlet. For the heat source side, the inlet
+    # should be hotter than the outlet; if not, swap.
+    hot_in_state = htr["hot_side"]["state_in"]
+    hot_out_state = htr["hot_side"]["state_out"]
+    if hasattr(hot_in_state, "T") and hasattr(hot_out_state, "T") and (hot_in_state.T < hot_out_state.T):
+        hot_in_state, hot_out_state = hot_out_state, hot_in_state
+
+    e_htr_hot_in = e_hf(hot_in_state)
+    e_htr_hot_out = e_hf(hot_out_state)
+
     e_htr_cold_in = e_wf(htr["cold_side"]["state_in"])
     e_htr_cold_out = e_wf(htr["cold_side"]["state_out"])
 
@@ -660,10 +678,23 @@ def perform_exergy_analysis(cycle_object, config_file=None, T0=None, p0=None):
     # ---- 6d. Cooler (condenser / heat sink HX) ------------------------------
     clr = components["cooler"]
     m_cf = clr["cold_side"]["mass_flow"]
-    e_clr_hot_in = e_wf(clr["hot_side"]["state_in"])
-    e_clr_hot_out = e_wf(clr["hot_side"]["state_out"])
-    e_clr_cold_in = e_cf(clr["cold_side"]["state_in"])
-    e_clr_cold_out = e_cf(clr["cold_side"]["state_out"])
+    # As with the heater, ensure we use the physical inlet/outlet for exergy accounting.
+    # Working-fluid (hot side) should cool down across the condenser; if not, swap.
+    wf_hot_in_state = clr["hot_side"]["state_in"]
+    wf_hot_out_state = clr["hot_side"]["state_out"]
+    if hasattr(wf_hot_in_state, "T") and hasattr(wf_hot_out_state, "T") and (wf_hot_in_state.T < wf_hot_out_state.T):
+        wf_hot_in_state, wf_hot_out_state = wf_hot_out_state, wf_hot_in_state
+
+    # Cooling-fluid (cold side) should heat up across the condenser; if not, swap.
+    cf_in_state = clr["cold_side"]["state_in"]
+    cf_out_state = clr["cold_side"]["state_out"]
+    if hasattr(cf_in_state, "T") and hasattr(cf_out_state, "T") and (cf_in_state.T > cf_out_state.T):
+        cf_in_state, cf_out_state = cf_out_state, cf_in_state
+
+    e_clr_hot_in = e_wf(wf_hot_in_state)
+    e_clr_hot_out = e_wf(wf_hot_out_state)
+    e_clr_cold_in = e_cf(cf_in_state)
+    e_clr_cold_out = e_cf(cf_out_state)
 
     E_D_clr = (m_wf * (e_clr_hot_in - e_clr_hot_out)
                + m_cf * (e_clr_cold_in - e_clr_cold_out))
