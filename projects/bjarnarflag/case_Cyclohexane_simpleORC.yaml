@@ -83,7 +83,7 @@ problem_formulation:
     # HEAT SINK
     # ==========================================================================
     heat_sink:
-      inlet_temperature: 293.15
+      inlet_temperature: 295.15 #22°C
       inlet_pressure: 101325
       exit_pressure: 101325
 
@@ -130,10 +130,10 @@ problem_formulation:
       max: 465.25                   # 480.25 - X K  (i.e., 202.1°C)
       value: 373.15
 
-    heat_sink_exit_temperature: #This is often a problem if the brine is going into a lake or river
-      min: 298.15 # force at least 5°C rise (25°C exit)
-      max: 308.15 # i.e. 10°C higher than the min value
-      value: 293.15
+    heat_sink_exit_temperature: # Temperature is limited to not exceed 42°C (environmental constraint), Allowing up to 5°C lower variation.
+      min: 310.15 # 37°C
+      max: 315.15   # 42°C (upper limit, given from data)
+      value: 315.15 # starting value at max
 
     compressor_inlet_pressure: #This is pump
       min: 0.9*$working_fluid.liquid_at_ambient_temperature.p
@@ -147,7 +147,8 @@ problem_formulation:
     
     expander_inlet_pressure: #Turbine inlet pressure
       min: 0.05*$working_fluid.triple_point_vapor.p #Here I am setting a very low pressure by multiplying the triple point vapor pressure with 0.1
-      max: 0.15*$working_fluid.critical_point.p #Here I am setting it very high, 3 times the triple point vapor - so the optimizer can go everywhere between these two bounds and optimize
+      #max: 0.15*$working_fluid.critical_point.p #Here I am setting it very high, 3 times the triple point vapor - so the optimizer can go everywhere between these two bounds and optimize
+      max: 0.8*$working_fluid.critical_point.p  # was 0.15 — too restrictive for high-Tc fluids in working fluid sweep
       value: 0.10*$working_fluid.critical_point.p #I am starting somewhere in the middle of this huge range
 
 
@@ -171,7 +172,7 @@ problem_formulation:
     - variable: $components.cooler.temperature_difference
       type: ">"
       #value: 5
-      value: 8        # was 5 — gives ~3 K buffer bc otherwise it was just at 3.2 instead of 5
+      value: 5        # potentially put this to 8 — gives ~3 K buffer bc otherwise it was just at 3.2 instead of 5
       normalize: True
 
 
@@ -189,12 +190,14 @@ problem_formulation:
 
 
 
-    - variable: $components.expander.state_in.T
-      type: "<"
-      value: 470
-      normalize: True
+    # - variable: $components.expander.state_in.T
+    #   type: "<"
+    #   value: 470
+    #   normalize: True
 
 
+
+#########
     # - variable: $components.recuperator.temperature_difference
     #   type: ">"
     #   value: 10
