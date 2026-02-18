@@ -12,7 +12,7 @@ warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
 #  CONFIGURATION — change these two settings
 # ══════════════════════════════════════════════════════════════════════
 MODE = "optimize"  # "optimize" = single fluid  |  "sweep" = working fluid sweep
-CONFIG_FILE = Path(__file__).with_name("case_Cyclohexane_simpleORC.yaml")
+CONFIG_FILE = Path(__file__).with_name("case_Toluene_simpleORC.yaml")
 SWEEP_OUTPUT_DIR = "results/fluid_sweep_BASIC_ORC"
 
 
