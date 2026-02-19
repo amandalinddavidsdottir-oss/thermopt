@@ -40,6 +40,8 @@ CYCLE_TOPOLOGIES = {
     "power_split_compression": cycles.cycle_power_split_compression.evaluate_cycle,
     "split_compression": cycles.cycle_power_split_compression.evaluate_cycle,
     "recompression": cycles.cycle_power_split_compression.evaluate_cycle,
+    "dual_pressure": cycles.cycle_power_dual_pressure.evaluate_cycle,        # ← Added
+    "power_dual_pressure": cycles.cycle_power_dual_pressure.evaluate_cycle,  # ← Added
     "refrigeration_simple": cycles.cycle_refrigeration_simple.evaluate_cycle,
     "refrigeration_recuperated": cycles.cycle_refrigeration_recuperated.evaluate_cycle,
     "PTES_recuperated": cycles.cycle_PTES_recuperated.evaluate_cycle,
@@ -827,7 +829,8 @@ class ThermodynamicCycleProblem(psv.OptimizationProblem):
                 "color": plot_params["color"],
                 "marker": "none",
                 "label": name,
-                "zorder": 1,
+                #"zorder": 1, 
+                "zorder": 10, # Raise z-order so cycle processes are drawn above the phase diagram
             }
 
             point_kwargs = {
@@ -837,7 +840,8 @@ class ThermodynamicCycleProblem(psv.OptimizationProblem):
                 "markeredgewidth": plot_params["markeredgewidth"],
                 "markerfacecolor": plot_params["markerfacecolor"],
                 "color": plot_params["color"],
-                "zorder": 2,
+                #"zorder": 2,
+                "zorder": 11, # Raise z-order so cycle processes are drawn above the phase diagram
             }
 
             # Create new plot elements if data is not None

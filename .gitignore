@@ -84,3 +84,8 @@ projects/bjarnarflag/Old versions/
 projects/bjarnarflag/Old versions/ 
 projects/bjarnarflag/Brine calculations/ 
 projects/bjarnarflag/Preliminary Working Fluid Sweep/ 
+
+
+
+projects/bjarnarflag/**/*.txt
+graphs/

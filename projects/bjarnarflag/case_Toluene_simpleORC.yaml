@@ -128,34 +128,34 @@ problem_formulation:
     heat_source_exit_temperature: #This is related to the reinjection temperature limit
       min: 373.15 #this is 100 for example
       max: 465.25                   # 480.25 - X K  (i.e., 202.1°C)
-      value: 373.15
-
+      value: 378.15
+      
     heat_sink_exit_temperature: # Temperature is limited to not exceed 42°C (environmental constraint), Allowing up to 5°C lower variation.
       min: 310.15 # 37°C
       max: 315.15   # 42°C (upper limit, given from data)
-      value: 315.15 # starting value at max
+      value: 310.15
 
     compressor_inlet_pressure: #This is pump
       min: 0.9*$working_fluid.liquid_at_ambient_temperature.p
       max: 3.0*$working_fluid.liquid_at_ambient_temperature.p
-      value: 1.5*$working_fluid.liquid_at_ambient_temperature.p #Pump Inlet pressure 
+      value: 2.70*$working_fluid.liquid_at_ambient_temperature.p
 
     compressor_inlet_enthalpy: #This is pump
       min: 0.01*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
       max:  0.15*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
-      value: 0.01*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h #Pump inlet enthalpy
+      value: 0.016*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
     
     expander_inlet_pressure: #Turbine inlet pressure
       min: 0.05*$working_fluid.triple_point_vapor.p #Here I am setting a very low pressure by multiplying the triple point vapor pressure with 0.1
       #max: 0.15*$working_fluid.critical_point.p #Here I am setting it very high, 3 times the triple point vapor - so the optimizer can go everywhere between these two bounds and optimize
       max: 0.8*$working_fluid.critical_point.p  # was 0.15 — too restrictive for high-Tc fluids in working fluid sweep
-      value: 0.10*$working_fluid.critical_point.p #I am starting somewhere in the middle of this huge range
+      value: 0.057*$working_fluid.critical_point.p
 
 
     expander_inlet_enthalpy: #Turbine inlet enthalpy
       min: 0.80*$working_fluid.gas_at_maximum_temperature.h 
       max: 1*$working_fluid.gas_at_maximum_temperature.h #what will be the enthalpy at the maximum temperature state, so this is reasonable upper bound (regardless of working fluid)
-      value: 0.95*$working_fluid.gas_at_maximum_temperature.h
+      value: 0.82*$working_fluid.gas_at_maximum_temperature.h
 
 
 

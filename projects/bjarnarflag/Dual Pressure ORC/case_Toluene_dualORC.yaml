@@ -1,0 +1,203 @@
+solver_options:
+  library: scipy
+  method: slsqp
+  derivative_method: 2-point
+  derivative_abs_step: 1e-6
+  print_convergence: True
+  plot_convergence: False
+  logger: None
+  update_on: gradient
+  tolerance: 1e-6
+  max_iterations: 300
+  problem_scale: 20
+  callbacks:
+    save_plot: True
+    save_config: True
+    save_report: True
+    plot_cycle: True
+    plot_convergence: False
+
+problem_formulation:
+  cycle_topology: dual_pressure
+
+  plot_settings:
+    pinch_point_diagram: False
+    fluid:
+      plot_saturation_line: True
+      plot_critical_point: True
+      plot_quality_isolines: True
+      plot_pseudocritical_line: False
+      plot_triple_point_liquid: False
+      plot_triple_point_vapor: False
+    diagrams:
+      - x_prop: s
+        y_prop: T
+        x_scale: linear
+        y_scale: linear
+
+  fixed_parameters:
+    working_fluid:
+      name: Toluene
+      backend: HEOS
+      exceptions: True
+    heating_fluid:
+      name: water
+      backend: HEOS
+      exceptions: True
+    cooling_fluid:
+      name: water
+      backend: HEOS
+      exceptions: True
+    net_power: 45e6
+    special_points:
+      ambient_pressure: 101325
+      ambient_temperature: 293.15
+      maximum_temperature: 470
+    heat_source:
+      inlet_temperature: 480.25
+      minimum_temperature: 373.15
+      inlet_pressure: 1801000
+      exit_pressure: 1801000
+    heat_sink:
+      inlet_temperature: 295.15
+      inlet_pressure: 101325
+      exit_pressure: 101325
+
+    # Three brine-side heat exchangers
+    hp_evaporator:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+    lp_evaporator:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+    preheater:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+    cooler:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+
+    # Two expanders
+    hp_expander:
+      efficiency: 0.90
+      efficiency_type: "isentropic"
+    lp_expander:
+      efficiency: 0.90
+      efficiency_type: "isentropic"
+
+    # Two pumps
+    lp_pump:
+      efficiency: 0.85
+      efficiency_type: "isentropic"
+    hp_pump:
+      efficiency: 0.85
+      efficiency_type: "isentropic"
+    heat_source_pump:
+      efficiency: 0.80
+      efficiency_type: "isentropic"
+    heat_sink_pump:
+      efficiency: 0.80
+      efficiency_type: "isentropic"
+
+  design_variables:
+    hp_expander_inlet_pressure:
+      min: 0.05*$working_fluid.critical_point.p
+      max: 0.25*$working_fluid.critical_point.p
+      value: 0.1074*$working_fluid.critical_point.p
+
+    hp_expander_inlet_enthalpy:
+      min: 0.80*$working_fluid.gas_at_maximum_temperature.h
+      max: 1.00*$working_fluid.gas_at_maximum_temperature.h
+      value: 0.9394*$working_fluid.gas_at_maximum_temperature.h
+
+    lp_expander_inlet_pressure:
+      min: 0.01*$working_fluid.critical_point.p
+      max: 0.15*$working_fluid.critical_point.p
+      value: 0.0291*$working_fluid.critical_point.p
+
+    lp_evaporator_outlet_enthalpy:
+      min: 0.80*$working_fluid.gas_at_maximum_temperature.h
+      max: 0.95*$working_fluid.gas_at_maximum_temperature.h
+      value: 0.85*$working_fluid.gas_at_maximum_temperature.h
+
+    compressor_inlet_pressure:
+      min: 0.9*$working_fluid.liquid_at_ambient_temperature.p
+      max: 3.0*$working_fluid.liquid_at_ambient_temperature.p
+      value: 2.695*$working_fluid.liquid_at_ambient_temperature.p
+
+    compressor_inlet_enthalpy:
+      min: 0.01*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      max: 0.15*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      value: 0.045*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+
+    mass_split_fraction:
+      min: 0.20
+      max: 0.80
+      value: 0.478
+
+    preheater_outlet_enthalpy:
+      min: 0.05*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      max: 0.50*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      value: 0.117*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+
+    heat_source_mid_temperature:
+      min: 393.15
+      max: 470.25
+      value: 429.0
+
+    heat_sink_exit_temperature:
+      min: 310.15
+      max: 315.15
+      value: 310.15
+
+    # NOTE: heat_source_exit_temperature is NOT a design variable.
+    # T_HS,out is computed from the energy balance chain.
+    # The reinjection limit is enforced as a constraint below.
+
+  constraints:
+    # Pinch points for all three brine-side HXs
+    - variable: $components.hp_evaporator.temperature_difference
+      type: ">"
+      value: 5
+      normalize: True
+
+    - variable: $components.lp_evaporator.temperature_difference
+      type: ">"
+      value: 5
+      normalize: True
+
+    - variable: $components.preheater.temperature_difference
+      type: ">"
+      value: 5
+      normalize: True
+
+    - variable: $components.cooler.temperature_difference
+      type: ">"
+      value: 5
+      normalize: True
+
+    # Subcooling at pump inlet
+    - variable: $components.lp_pump.state_in.subcooling
+      type: ">"
+      value: 1.0
+      normalize: True
+
+    # Superheating at HP turbine inlet
+    - variable: $components.hp_expander.state_in.superheating
+      type: ">"
+      value: 5
+
+    # Brine reinjection temperature limit (T_HS,out is COMPUTED, not a design variable)
+    - variable: $energy_analysis.brine_exit_temperature
+      type: ">"
+      value: 373.15
+
+
+
+  objective_function:
+    variable: $energy_analysis.system_efficiency
+    type: maximize
