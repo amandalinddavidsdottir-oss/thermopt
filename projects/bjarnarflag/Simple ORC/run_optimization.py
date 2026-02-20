@@ -5,6 +5,14 @@ import thermopt as th
 import matplotlib.pyplot as plt
 from pathlib import Path
 
+#---- importing post processing files:
+sys.path.insert(0, str(Path(__file__).resolve().parent / "shared_utilities"))
+from exergy_analysis import perform_exergy_analysis, plot_heat_source_utilization
+from plot_TQ_diagram import plot_TQ_diagram
+from turbine_macchi_astolfi import evaluate_turbine_efficiency
+from validation_checks import run_validation_checks
+#-----
+
 warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
 
 
@@ -13,6 +21,7 @@ warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
 # ══════════════════════════════════════════════════════════════════════
 MODE = "optimize"  # "optimize" = single fluid  |  "sweep" = working fluid sweep
 CONFIG_FILE = Path(__file__).with_name("case_Toluene_simpleORC.yaml")
+#CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_simpleORC.yaml")
 SWEEP_OUTPUT_DIR = "results/fluid_sweep_BASIC_ORC"
 
 
@@ -29,6 +38,9 @@ def run_optimize(config_file):
 
     cycle.run_optimization()
     cycle.save_results()
+
+    # ──────────────────────── VALIDATION CHECKS ───────────────────────
+    run_validation_checks(cycle)
 
     # ── Post-processing ───────────────────────────────────────────
     graph_dir = os.path.join(cycle.out_dir, "graphs")

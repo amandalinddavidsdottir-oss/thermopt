@@ -55,7 +55,7 @@ problem_formulation:
       maximum_temperature: 470
     heat_source:
       inlet_temperature: 480.25
-      minimum_temperature: 373.15
+      minimum_temperature: 393.15 #120°C
       inlet_pressure: 1801000
       exit_pressure: 1801000
     heat_sink:
@@ -107,27 +107,27 @@ problem_formulation:
     hp_expander_inlet_pressure:
       min: 0.05*$working_fluid.critical_point.p
       max: 0.25*$working_fluid.critical_point.p
-      value: 0.1110*$working_fluid.critical_point.p
+      value: 0.1159*$working_fluid.critical_point.p
 
     hp_expander_inlet_enthalpy:
       min: 0.80*$working_fluid.gas_at_maximum_temperature.h
       max: 1.00*$working_fluid.gas_at_maximum_temperature.h
-      value: 0.9391*$working_fluid.gas_at_maximum_temperature.h
+      value: 0.9406*$working_fluid.gas_at_maximum_temperature.h
 
     lp_expander_inlet_pressure:
       min: 0.01*$working_fluid.critical_point.p
       max: 0.15*$working_fluid.critical_point.p
-      value: 0.0283*$working_fluid.critical_point.p
+      value: 0.0436*$working_fluid.critical_point.p
 
     lp_evaporator_outlet_enthalpy:
       min: 0.80*$working_fluid.gas_at_maximum_temperature.h
       max: 0.95*$working_fluid.gas_at_maximum_temperature.h
-      value: 0.8456*$working_fluid.gas_at_maximum_temperature.h
+      value: 0.8489*$working_fluid.gas_at_maximum_temperature.h
 
     compressor_inlet_pressure:
       min: 0.9*$working_fluid.liquid_at_ambient_temperature.p
       max: 3.0*$working_fluid.liquid_at_ambient_temperature.p
-      value: 2.620*$working_fluid.liquid_at_ambient_temperature.p
+      value: 2.6201*$working_fluid.liquid_at_ambient_temperature.p
 
     compressor_inlet_enthalpy:
       min: 0.01*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
@@ -137,22 +137,22 @@ problem_formulation:
     mass_split_fraction:
       min: 0.20
       max: 0.80
-      value: 0.4890
+      value: 0.5427
 
     preheater_outlet_enthalpy:
       min: 0.05*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
       max: 0.50*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
-      value: 0.1237*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      value: 0.1074*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
 
     heat_source_mid_temperature:
       min: 393.15
       max: 470.25
-      value: 431.90
+      value: 435.70
 
     heat_sink_exit_temperature:
       min: 310.15
       max: 315.15
-      value: 310.20
+      value: 310.15
 
     # NOTE: heat_source_exit_temperature is NOT a design variable.
     # T_HS,out is computed from the energy balance chain.
@@ -194,7 +194,7 @@ problem_formulation:
     # Brine reinjection temperature limit (T_HS,out is COMPUTED, not a design variable)
     - variable: $energy_analysis.brine_exit_temperature
       type: ">"
-      value: 373.15
+      value: 393.15 #120°C
 
 
 

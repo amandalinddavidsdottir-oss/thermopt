@@ -18,7 +18,7 @@ solver_options:
     plot_convergence: False
 
 problem_formulation:
-  cycle_topology: dual_pressure
+  cycle_topology: recuperated_dual_pressure
 
   plot_settings:
     pinch_point_diagram: False
@@ -55,7 +55,7 @@ problem_formulation:
       maximum_temperature: 470
     heat_source:
       inlet_temperature: 480.25
-      minimum_temperature: 373.15
+      minimum_temperature: 393.15
       inlet_pressure: 1801000
       exit_pressure: 1801000
     heat_sink:
@@ -76,6 +76,13 @@ problem_formulation:
       pressure_drop_hot_side: 0.01
       pressure_drop_cold_side: 0.01
       num_elements: 25
+
+    # Recuperator (internal heat exchanger)
+    recuperator:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+
     cooler:
       pressure_drop_hot_side: 0.01
       pressure_drop_cold_side: 0.01
@@ -107,32 +114,32 @@ problem_formulation:
     hp_expander_inlet_pressure:
       min: 0.05*$working_fluid.critical_point.p
       max: 0.25*$working_fluid.critical_point.p
-      value: 0.1110*$working_fluid.critical_point.p
+      value: 0.1215*$working_fluid.critical_point.p
 
     hp_expander_inlet_enthalpy:
       min: 0.80*$working_fluid.gas_at_maximum_temperature.h
       max: 1.00*$working_fluid.gas_at_maximum_temperature.h
-      value: 0.9391*$working_fluid.gas_at_maximum_temperature.h
+      value: 0.9223*$working_fluid.gas_at_maximum_temperature.h
 
     lp_expander_inlet_pressure:
       min: 0.01*$working_fluid.critical_point.p
       max: 0.15*$working_fluid.critical_point.p
-      value: 0.0283*$working_fluid.critical_point.p
+      value: 0.0370*$working_fluid.critical_point.p
 
     lp_evaporator_outlet_enthalpy:
       min: 0.80*$working_fluid.gas_at_maximum_temperature.h
       max: 0.95*$working_fluid.gas_at_maximum_temperature.h
-      value: 0.8456*$working_fluid.gas_at_maximum_temperature.h
+      value: 0.8388*$working_fluid.gas_at_maximum_temperature.h
 
     compressor_inlet_pressure:
       min: 0.9*$working_fluid.liquid_at_ambient_temperature.p
       max: 3.0*$working_fluid.liquid_at_ambient_temperature.p
-      value: 2.620*$working_fluid.liquid_at_ambient_temperature.p
+      value: 2.7727*$working_fluid.liquid_at_ambient_temperature.p
 
     compressor_inlet_enthalpy:
       min: 0.01*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
       max: 0.15*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
-      value: 0.0435*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      value: 0.0465*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
 
     mass_split_fraction:
       min: 0.20
@@ -142,17 +149,25 @@ problem_formulation:
     preheater_outlet_enthalpy:
       min: 0.05*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
       max: 0.50*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
-      value: 0.1237*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      value: 0.1061*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
 
     heat_source_mid_temperature:
       min: 393.15
       max: 470.25
-      value: 431.90
+      value: 436.67
 
     heat_sink_exit_temperature:
       min: 310.15
       max: 315.15
-      value: 310.20
+      value: 310.15
+
+    # Recuperator effectiveness
+    recuperator_effectiveness:
+      min: 0.0
+      max: 0.95
+      value: 0.4796
+   
+
 
     # NOTE: heat_source_exit_temperature is NOT a design variable.
     # T_HS,out is computed from the energy balance chain.
@@ -171,6 +186,12 @@ problem_formulation:
       normalize: True
 
     - variable: $components.preheater.temperature_difference
+      type: ">"
+      value: 5
+      normalize: True
+
+    # Recuperator pinch point
+    - variable: $components.recuperator.temperature_difference
       type: ">"
       value: 5
       normalize: True
@@ -194,9 +215,12 @@ problem_formulation:
     # Brine reinjection temperature limit (T_HS,out is COMPUTED, not a design variable)
     - variable: $energy_analysis.brine_exit_temperature
       type: ">"
-      value: 373.15
+      value: 393.15
 
-
+    # Prevent preheater from running backwards: when the recuperator heats the working fluid above the preheater outlet enthalpy (h_3), the preheater would transfer heat FROM the working fluid TO the brine, which is physically nonsensical. This constraint ensures Q_pre > 0.
+    - variable: $energy_analysis.preheater_heat_flow
+      type: ">"
+      value: 0
 
   objective_function:
     variable: $energy_analysis.system_efficiency

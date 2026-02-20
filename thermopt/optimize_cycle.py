@@ -42,6 +42,8 @@ CYCLE_TOPOLOGIES = {
     "recompression": cycles.cycle_power_split_compression.evaluate_cycle,
     "dual_pressure": cycles.cycle_power_dual_pressure.evaluate_cycle,        # ← Added
     "power_dual_pressure": cycles.cycle_power_dual_pressure.evaluate_cycle,  # ← Added
+    "recuperated_dual_pressure": cycles.cycle_power_recuperated_dual_pressure.evaluate_cycle,          # ← Added
+    "power_recuperated_dual_pressure": cycles.cycle_power_recuperated_dual_pressure.evaluate_cycle,    # ← Added
     "refrigeration_simple": cycles.cycle_refrigeration_simple.evaluate_cycle,
     "refrigeration_recuperated": cycles.cycle_refrigeration_recuperated.evaluate_cycle,
     "PTES_recuperated": cycles.cycle_PTES_recuperated.evaluate_cycle,

@@ -95,6 +95,65 @@ class ExergyResults:
     # ----- pretty-print to console ------------------------------------------
     def print_summary(self):
         """Print a formatted summary of the exergy analysis."""
+
+        # ══════════════════════════════════════════════════════════════
+        #  SECTION 1 — EFFICIENCY COMPARISON (the headline numbers)
+        # ══════════════════════════════════════════════════════════════
+        print("\n" + "=" * 76)
+        print("  EFFICIENCY COMPARISON")
+        print("=" * 76)
+        print()
+        print("  From ThermOpt (1st Law / Energy-based):")
+        print(f"    Cycle efficiency    η_cycle  = W_net / Q_in       = "
+              f"{self.cycle.get('eta_cycle', float('nan')) * 100:6.2f} %")
+        print(f"    System efficiency   η_system = W_net / Q_avail    = "
+              f"{self.cycle.get('eta_system', float('nan')) * 100:6.2f} %")
+        print()
+        print("  From Exergy Analysis (2nd Law / Exergy-based):")
+        print(f"    Exergy efficiency   η_exergy = W_net / E_fuel     = "
+              f"{self.cycle.get('eta_exergy', float('nan')) * 100:6.2f} %")
+        print()
+        print("  ── Interpretation for Geothermal ──")
+        print("    • η_cycle:  How well the cycle converts received heat to work")
+        print("    • η_system: How well the system extracts power from the brine (KEY METRIC)")
+        print("    • η_exergy: How close to thermodynamic ideal (quality of conversion)")
+        print()
+
+        # ── Power breakdown ──
+        print("  ── Power Breakdown ──")
+        print(f"  Gross expander power               : "
+              f"{self.cycle.get('W_expander', 0) / 1e3:12.2f} kW")
+        print(f"  WF pump (compressor) power         : "
+              f"{self.cycle.get('W_compressor', 0) / 1e3:12.2f} kW")
+        print(f"  Auxiliary pumps power              : "
+              f"{self.cycle.get('W_aux_pumps', 0) / 1e3:12.2f} kW")
+        print(f"  Net system power                   : "
+              f"{self.cycle.get('W_net_system', 0) / 1e3:12.2f} kW")
+        print()
+
+        # ── Energy values (imported from ThermOpt) ──
+        print("  ── Energy Analysis (from ThermOpt) ──")
+        print(f"  Heat input Q_in                    : "
+              f"{self.cycle.get('Q_in', 0) / 1e3:12.2f} kW")
+        print(f"  Available heat Q_available         : "
+              f"{self.cycle.get('Q_available', 0) / 1e3:12.2f} kW")
+        print(f"  Heat utilization (Q_in/Q_avail)    : "
+              f"{self.cycle.get('heat_utilization', 0) * 100:12.2f} %")
+        print()
+
+        # ── Exergy values (calculated here) ──
+        print("  ── Exergy Analysis (calculated here) ──")
+        print(f"  Exergy fuel (heat source)          : "
+              f"{self.cycle['E_fuel'] / 1e3:12.2f} kW")
+        print(f"  Exergy product (net power)         : "
+              f"{self.cycle['E_product'] / 1e3:12.2f} kW")
+        print(f"  Exergy loss (cooler)               : "
+              f"{self.cycle.get('E_loss_cooler', 0) / 1e3:12.2f} kW")
+        print("=" * 76)
+
+        # ══════════════════════════════════════════════════════════════
+        #  SECTION 2 — EXERGY BREAKDOWN (component-by-component)
+        # ══════════════════════════════════════════════════════════════
         print("\n" + "=" * 76)
         print("  EXERGY ANALYSIS  —  Component-by-Component Results")
         print("=" * 76)
@@ -119,60 +178,7 @@ class ExergyResults:
         print("-" * 76)
         print(f"  {'TOTAL':<24s} {E_D_total / 1e3:10.2f} {'100.00':>10s}")
         print()
-        
-        # ── Energy values (imported from ThermOpt) ──
-        print("  ── Energy Analysis (from ThermOpt) ──")
-        print(f"  Heat input Q_in                    : "
-              f"{self.cycle.get('Q_in', 0) / 1e3:12.2f} kW")
-        print(f"  Available heat Q_available         : "
-              f"{self.cycle.get('Q_available', 0) / 1e3:12.2f} kW")
-        print(f"  Heat utilization (Q_in/Q_avail)    : "
-              f"{self.cycle.get('heat_utilization', 0) * 100:12.2f} %")
-        print()
-        
-        # ── Exergy values (calculated here) ──
-        print("  ── Exergy Analysis (calculated here) ──")
-        print(f"  Exergy fuel (heat source)          : "
-              f"{self.cycle['E_fuel'] / 1e3:12.2f} kW")
-        print(f"  Exergy product (net power)         : "
-              f"{self.cycle['E_product'] / 1e3:12.2f} kW")
-        print(f"  Exergy loss (cooler)               : "
-              f"{self.cycle.get('E_loss_cooler', 0) / 1e3:12.2f} kW")
-        print()
-        
-        # ── Power breakdown ──
-        print("  ── Power Breakdown ──")
-        print(f"  Gross expander power               : "
-              f"{self.cycle.get('W_expander', 0) / 1e3:12.2f} kW")
-        print(f"  WF pump (compressor) power         : "
-              f"{self.cycle.get('W_compressor', 0) / 1e3:12.2f} kW")
-        print(f"  Auxiliary pumps power              : "
-              f"{self.cycle.get('W_aux_pumps', 0) / 1e3:12.2f} kW")
-        print(f"  Net system power                   : "
-              f"{self.cycle.get('W_net_system', 0) / 1e3:12.2f} kW")
-        print()
-        
-        # ── Efficiencies comparison ──
-        print("  ══════════════════════════════════════════════════════════════════════")
-        print("  EFFICIENCY COMPARISON")
-        print("  ══════════════════════════════════════════════════════════════════════")
-        print()
-        print("  From ThermOpt (1st Law / Energy-based):")
-        print(f"    Cycle efficiency    η_cycle  = W_net / Q_in       = "
-              f"{self.cycle.get('eta_cycle', float('nan')) * 100:6.2f} %")
-        print(f"    System efficiency   η_system = W_net / Q_avail    = "
-              f"{self.cycle.get('eta_system', float('nan')) * 100:6.2f} %")
-        print()
-        print("  From Exergy Analysis (2nd Law / Exergy-based):")
-        print(f"    Exergy efficiency   η_exergy = W_net / E_fuel     = "
-              f"{self.cycle.get('eta_exergy', float('nan')) * 100:6.2f} %")
-        print()
-        print("  ── Interpretation for Geothermal ──")
-        print("    • η_cycle:  How well the cycle converts received heat to work")
-        print("    • η_system: How well the system extracts power from the brine (KEY METRIC)")
-        print("    • η_exergy: How close to thermodynamic ideal (quality of conversion)")
-        print()
-        
+
         # Exergy balance closure
         residual = self.cycle.get("balance_residual", 0)
         E_fuel_val = self.cycle["E_fuel"]
@@ -534,17 +540,27 @@ def perform_exergy_analysis(cycle_object, config_file=None, T0=None, p0=None):
     # 2. IMPORT energy-based values from ThermOpt (no recalculation!)
     # =========================================================================
     
+    # Auto-detect topology
+    is_dual = "hp_expander" in components
+    
     # Efficiencies (from ThermOpt)
     eta_cycle = energy.get("cycle_efficiency", 0.0)      # W_net / Q_in
     eta_system = energy.get("system_efficiency", 0.0)    # W_net / Q_available
     
     # Heat flows (from ThermOpt)
-    Q_in = energy.get("heater_heat_flow", 0.0)           # Actual heat transferred
-    Q_available = energy.get("heater_heat_flow_max", 0.0)  # Max possible heat
+    if is_dual:
+        Q_in = energy.get("total_heat_input", 0.0)
+    else:
+        Q_in = energy.get("heater_heat_flow", 0.0)
+    Q_available = energy.get("heater_heat_flow_max", 0.0)
     
     # Power values (from ThermOpt)
-    W_expander = energy.get("expander_power", 0.0)
-    W_compressor = energy.get("compressor_power", 0.0)
+    if is_dual:
+        W_expander = energy.get("total_expander_power", 0.0)
+        W_compressor = energy.get("lp_pump_power", 0.0) + energy.get("hp_pump_power", 0.0)
+    else:
+        W_expander = energy.get("expander_power", 0.0)
+        W_compressor = energy.get("compressor_power", 0.0)
     W_hs_pump = energy.get("heat_source_pump_power", 0.0)
     W_hk_pump = energy.get("heat_sink_pump_power", 0.0)
     W_aux_pumps = W_hs_pump + W_hk_pump
@@ -613,124 +629,357 @@ def perform_exergy_analysis(cycle_object, config_file=None, T0=None, p0=None):
     results.T0 = T0
     results.p0 = p0
 
-    # ---- 6a. Expander (turbine) ---------------------------------------------
-    exp = components["expander"]
-    m_wf = exp["mass_flow"]
-    e_exp_in = e_wf(exp["state_in"])
-    e_exp_out = e_wf(exp["state_out"])
-    W_exp = exp["power"]  # From ThermOpt
-    E_D_exp = m_wf * (e_exp_in - e_exp_out) - W_exp
-    eta_ex_exp = W_exp / (m_wf * (e_exp_in - e_exp_out)) if (e_exp_in - e_exp_out) != 0 else None
+    if is_dual:
+        # ==================================================================
+        # DUAL-PRESSURE ORC
+        # ==================================================================
 
-    results.components["expander"] = {
-        "E_D": float(E_D_exp),
-        "eta_exergy": float(eta_ex_exp) if eta_ex_exp is not None else None,
-        "E_in": float(m_wf * (e_exp_in - e_exp_out)),
-        "E_out": float(W_exp),
-    }
+        # ---- 6a. HP Expander (turbine) --------------------------------------
+        hp_exp = components["hp_expander"]
+        m_HP = hp_exp["mass_flow"]
+        e_hp_exp_in = e_wf(hp_exp["state_in"])
+        e_hp_exp_out = e_wf(hp_exp["state_out"])
+        W_hp_exp = hp_exp["power"]
+        E_D_hp_exp = m_HP * (e_hp_exp_in - e_hp_exp_out) - W_hp_exp
+        eta_ex_hp_exp = (W_hp_exp / (m_HP * (e_hp_exp_in - e_hp_exp_out))
+                         if (e_hp_exp_in - e_hp_exp_out) != 0 else None)
 
-    # ---- 6b. Compressor (pump for working fluid) ----------------------------
-    comp = components["compressor"]
-    e_comp_in = e_wf(comp["state_in"])
-    e_comp_out = e_wf(comp["state_out"])
-    W_comp = comp["power"]  # From ThermOpt
-    E_D_comp = W_comp - m_wf * (e_comp_out - e_comp_in)
-    eta_ex_comp = (m_wf * (e_comp_out - e_comp_in) / W_comp
-                   if W_comp != 0 else None)
+        results.components["hp_expander"] = {
+            "E_D": float(E_D_hp_exp),
+            "eta_exergy": float(eta_ex_hp_exp) if eta_ex_hp_exp is not None else None,
+            "E_in": float(m_HP * (e_hp_exp_in - e_hp_exp_out)),
+            "E_out": float(W_hp_exp),
+        }
 
-    results.components["compressor"] = {
-        "E_D": float(E_D_comp),
-        "eta_exergy": float(eta_ex_comp) if eta_ex_comp is not None else None,
-        "E_in": float(W_comp),
-        "E_out": float(m_wf * (e_comp_out - e_comp_in)),
-    }
+        # ---- 6b. LP Expander (turbine) --------------------------------------
+        lp_exp = components["lp_expander"]
+        m_total = lp_exp["mass_flow"]
+        e_lp_exp_in = e_wf(lp_exp["state_in"])
+        e_lp_exp_out = e_wf(lp_exp["state_out"])
+        W_lp_exp = lp_exp["power"]
+        E_D_lp_exp = m_total * (e_lp_exp_in - e_lp_exp_out) - W_lp_exp
+        eta_ex_lp_exp = (W_lp_exp / (m_total * (e_lp_exp_in - e_lp_exp_out))
+                         if (e_lp_exp_in - e_lp_exp_out) != 0 else None)
 
-    # ---- 6c. Heater (heat source HX) ----------------------------------------
-    htr = components["heater"]
-    m_hf = htr["hot_side"]["mass_flow"]
-    # ThermOpt may align hot/cold-side "in/out" states for counter-current HX plotting.
-    # For exergy accounting we want physical inlet/outlet. For the heat source side, the inlet
-    # should be hotter than the outlet; if not, swap.
-    hot_in_state = htr["hot_side"]["state_in"]
-    hot_out_state = htr["hot_side"]["state_out"]
-    if hasattr(hot_in_state, "T") and hasattr(hot_out_state, "T") and (hot_in_state.T < hot_out_state.T):
-        hot_in_state, hot_out_state = hot_out_state, hot_in_state
+        results.components["lp_expander"] = {
+            "E_D": float(E_D_lp_exp),
+            "eta_exergy": float(eta_ex_lp_exp) if eta_ex_lp_exp is not None else None,
+            "E_in": float(m_total * (e_lp_exp_in - e_lp_exp_out)),
+            "E_out": float(W_lp_exp),
+        }
 
-    e_htr_hot_in = e_hf(hot_in_state)
-    e_htr_hot_out = e_hf(hot_out_state)
+        # ---- 6c. LP Pump (all fluid) ----------------------------------------
+        lp_pump = components["lp_pump"]
+        e_lp_pump_in = e_wf(lp_pump["state_in"])
+        e_lp_pump_out = e_wf(lp_pump["state_out"])
+        W_lp_pump = lp_pump["power"]
+        E_D_lp_pump = W_lp_pump - m_total * (e_lp_pump_out - e_lp_pump_in)
+        eta_ex_lp_pump = (m_total * (e_lp_pump_out - e_lp_pump_in) / W_lp_pump
+                          if W_lp_pump != 0 else None)
 
-    e_htr_cold_in = e_wf(htr["cold_side"]["state_in"])
-    e_htr_cold_out = e_wf(htr["cold_side"]["state_out"])
+        results.components["lp_pump"] = {
+            "E_D": float(E_D_lp_pump),
+            "eta_exergy": float(eta_ex_lp_pump) if eta_ex_lp_pump is not None else None,
+            "E_in": float(W_lp_pump),
+            "E_out": float(m_total * (e_lp_pump_out - e_lp_pump_in)),
+        }
 
-    E_D_htr = (m_hf * (e_htr_hot_in - e_htr_hot_out)
-               + m_wf * (e_htr_cold_in - e_htr_cold_out))
-    E_given_hot = m_hf * (e_htr_hot_in - e_htr_hot_out)
-    E_gained_cold = m_wf * (e_htr_cold_out - e_htr_cold_in)
-    eta_ex_htr = E_gained_cold / E_given_hot if E_given_hot != 0 else None
+        # ---- 6d. HP Pump (HP fraction only) ----------------------------------
+        hp_pump = components["hp_pump"]
+        e_hp_pump_in = e_wf(hp_pump["state_in"])
+        e_hp_pump_out = e_wf(hp_pump["state_out"])
+        W_hp_pump = hp_pump["power"]
+        E_D_hp_pump = W_hp_pump - m_HP * (e_hp_pump_out - e_hp_pump_in)
+        eta_ex_hp_pump = (m_HP * (e_hp_pump_out - e_hp_pump_in) / W_hp_pump
+                          if W_hp_pump != 0 else None)
 
-    results.components["heater"] = {
-        "E_D": float(E_D_htr),
-        "eta_exergy": float(eta_ex_htr) if eta_ex_htr is not None else None,
-        "E_in": float(E_given_hot),
-        "E_out": float(E_gained_cold),
-    }
+        results.components["hp_pump"] = {
+            "E_D": float(E_D_hp_pump),
+            "eta_exergy": float(eta_ex_hp_pump) if eta_ex_hp_pump is not None else None,
+            "E_in": float(W_hp_pump),
+            "E_out": float(m_HP * (e_hp_pump_out - e_hp_pump_in)),
+        }
 
-    # ---- 6d. Cooler (condenser / heat sink HX) ------------------------------
-    clr = components["cooler"]
-    m_cf = clr["cold_side"]["mass_flow"]
-    # As with the heater, ensure we use the physical inlet/outlet for exergy accounting.
-    # Working-fluid (hot side) should cool down across the condenser; if not, swap.
-    wf_hot_in_state = clr["hot_side"]["state_in"]
-    wf_hot_out_state = clr["hot_side"]["state_out"]
-    if hasattr(wf_hot_in_state, "T") and hasattr(wf_hot_out_state, "T") and (wf_hot_in_state.T < wf_hot_out_state.T):
-        wf_hot_in_state, wf_hot_out_state = wf_hot_out_state, wf_hot_in_state
+        # ---- 6e. HP Evaporator -----------------------------------------------
+        hp_evap = components["hp_evaporator"]
+        m_hf = hp_evap["hot_side"]["mass_flow"]
+        m_hp_cold = hp_evap["cold_side"]["mass_flow"]
 
-    # Cooling-fluid (cold side) should heat up across the condenser; if not, swap.
-    cf_in_state = clr["cold_side"]["state_in"]
-    cf_out_state = clr["cold_side"]["state_out"]
-    if hasattr(cf_in_state, "T") and hasattr(cf_out_state, "T") and (cf_in_state.T > cf_out_state.T):
-        cf_in_state, cf_out_state = cf_out_state, cf_in_state
+        hot_in = hp_evap["hot_side"]["state_in"]
+        hot_out = hp_evap["hot_side"]["state_out"]
+        if hasattr(hot_in, "T") and hasattr(hot_out, "T") and (hot_in.T < hot_out.T):
+            hot_in, hot_out = hot_out, hot_in
 
-    e_clr_hot_in = e_wf(wf_hot_in_state)
-    e_clr_hot_out = e_wf(wf_hot_out_state)
-    e_clr_cold_in = e_cf(cf_in_state)
-    e_clr_cold_out = e_cf(cf_out_state)
+        e_hp_evap_hot_in = e_hf(hot_in)
+        e_hp_evap_hot_out = e_hf(hot_out)
+        e_hp_evap_cold_in = e_wf(hp_evap["cold_side"]["state_in"])
+        e_hp_evap_cold_out = e_wf(hp_evap["cold_side"]["state_out"])
 
-    E_D_clr = (m_wf * (e_clr_hot_in - e_clr_hot_out)
-               + m_cf * (e_clr_cold_in - e_clr_cold_out))
-    E_given_wf = m_wf * (e_clr_hot_in - e_clr_hot_out)
-    E_gained_cf = m_cf * (e_clr_cold_out - e_clr_cold_in)
-    eta_ex_clr = E_gained_cf / E_given_wf if E_given_wf != 0 else None
+        E_D_hp_evap = (m_hf * (e_hp_evap_hot_in - e_hp_evap_hot_out)
+                       + m_hp_cold * (e_hp_evap_cold_in - e_hp_evap_cold_out))
+        E_given = m_hf * (e_hp_evap_hot_in - e_hp_evap_hot_out)
+        E_gained = m_hp_cold * (e_hp_evap_cold_out - e_hp_evap_cold_in)
+        eta_ex_hp_evap = E_gained / E_given if E_given != 0 else None
 
-    results.components["cooler"] = {
-        "E_D": float(E_D_clr),
-        "eta_exergy": float(eta_ex_clr) if eta_ex_clr is not None else None,
-        "E_in": float(E_given_wf),
-        "E_out": float(E_gained_cf),
-    }
-
-    # ---- 6e. Recuperator (if present) ---------------------------------------
-    recup = components.get("recuperator", None)
-    if recup is not None:
-        e_rec_hot_in = e_wf(recup["hot_side"]["state_in"])
-        e_rec_hot_out = e_wf(recup["hot_side"]["state_out"])
-        e_rec_cold_in = e_wf(recup["cold_side"]["state_in"])
-        e_rec_cold_out = e_wf(recup["cold_side"]["state_out"])
-        m_rec_hot = recup["hot_side"]["mass_flow"]
-        m_rec_cold = recup["cold_side"]["mass_flow"]
-
-        E_D_rec = (m_rec_hot * (e_rec_hot_in - e_rec_hot_out)
-                   + m_rec_cold * (e_rec_cold_in - e_rec_cold_out))
-        E_given = m_rec_hot * (e_rec_hot_in - e_rec_hot_out)
-        E_gained = m_rec_cold * (e_rec_cold_out - e_rec_cold_in)
-        eta_ex_rec = E_gained / E_given if E_given != 0 else None
-
-        results.components["recuperator"] = {
-            "E_D": float(E_D_rec),
-            "eta_exergy": float(eta_ex_rec) if eta_ex_rec is not None else None,
+        results.components["hp_evaporator"] = {
+            "E_D": float(E_D_hp_evap),
+            "eta_exergy": float(eta_ex_hp_evap) if eta_ex_hp_evap is not None else None,
             "E_in": float(E_given),
             "E_out": float(E_gained),
         }
+
+        # ---- 6f. LP Evaporator -----------------------------------------------
+        lp_evap = components["lp_evaporator"]
+        m_lp_cold = lp_evap["cold_side"]["mass_flow"]
+
+        hot_in = lp_evap["hot_side"]["state_in"]
+        hot_out = lp_evap["hot_side"]["state_out"]
+        if hasattr(hot_in, "T") and hasattr(hot_out, "T") and (hot_in.T < hot_out.T):
+            hot_in, hot_out = hot_out, hot_in
+
+        e_lp_evap_hot_in = e_hf(hot_in)
+        e_lp_evap_hot_out = e_hf(hot_out)
+        e_lp_evap_cold_in = e_wf(lp_evap["cold_side"]["state_in"])
+        e_lp_evap_cold_out = e_wf(lp_evap["cold_side"]["state_out"])
+
+        E_D_lp_evap = (lp_evap["hot_side"]["mass_flow"] * (e_lp_evap_hot_in - e_lp_evap_hot_out)
+                       + m_lp_cold * (e_lp_evap_cold_in - e_lp_evap_cold_out))
+        E_given = lp_evap["hot_side"]["mass_flow"] * (e_lp_evap_hot_in - e_lp_evap_hot_out)
+        E_gained = m_lp_cold * (e_lp_evap_cold_out - e_lp_evap_cold_in)
+        eta_ex_lp_evap = E_gained / E_given if E_given != 0 else None
+
+        results.components["lp_evaporator"] = {
+            "E_D": float(E_D_lp_evap),
+            "eta_exergy": float(eta_ex_lp_evap) if eta_ex_lp_evap is not None else None,
+            "E_in": float(E_given),
+            "E_out": float(E_gained),
+        }
+
+        # ---- 6g. Preheater ---------------------------------------------------
+        pre = components["preheater"]
+        m_pre_cold = pre["cold_side"]["mass_flow"]
+
+        hot_in = pre["hot_side"]["state_in"]
+        hot_out = pre["hot_side"]["state_out"]
+        if hasattr(hot_in, "T") and hasattr(hot_out, "T") and (hot_in.T < hot_out.T):
+            hot_in, hot_out = hot_out, hot_in
+
+        e_pre_hot_in = e_hf(hot_in)
+        e_pre_hot_out = e_hf(hot_out)
+        e_pre_cold_in = e_wf(pre["cold_side"]["state_in"])
+        e_pre_cold_out = e_wf(pre["cold_side"]["state_out"])
+
+        E_D_pre = (pre["hot_side"]["mass_flow"] * (e_pre_hot_in - e_pre_hot_out)
+                   + m_pre_cold * (e_pre_cold_in - e_pre_cold_out))
+        E_given = pre["hot_side"]["mass_flow"] * (e_pre_hot_in - e_pre_hot_out)
+        E_gained = m_pre_cold * (e_pre_cold_out - e_pre_cold_in)
+        eta_ex_pre = E_gained / E_given if E_given != 0 else None
+
+        results.components["preheater"] = {
+            "E_D": float(E_D_pre),
+            "eta_exergy": float(eta_ex_pre) if eta_ex_pre is not None else None,
+            "E_in": float(E_given),
+            "E_out": float(E_gained),
+        }
+
+        # Guard: if preheater heat duty is negligible, zero out E_D to avoid
+        # numerical noise from discretization of near-zero enthalpy differences
+        pre_Q = abs(float(pre.get("heat_flow", 0)))
+        if pre_Q < 100e3:  # less than 100 kW
+            results.components["preheater"]["E_D"] = 0.0
+            results.components["preheater"]["eta_exergy"] = None
+
+        # ---- 6h. Mixer (irreversible mixing of HP and LP streams) ------------
+        # E_D_mixer = m_HP*e_7 + m_LP*e_4 - m_total*e_8
+        m_LP = m_total - m_HP
+        state_7 = components["hp_expander"]["state_out"]
+        state_4 = components["lp_evaporator"]["cold_side"]["state_out"]
+        state_8 = components["lp_expander"]["state_in"]
+
+        e_7 = e_wf(state_7)
+        e_4 = e_wf(state_4)
+        e_8 = e_wf(state_8)
+
+        E_D_mixer = m_HP * e_7 + m_LP * e_4 - m_total * e_8
+        # Mixer has no meaningful exergetic efficiency
+        results.components["mixer"] = {
+            "E_D": float(E_D_mixer),
+            "eta_exergy": None,
+            "E_in": float(m_HP * e_7 + m_LP * e_4),
+            "E_out": float(m_total * e_8),
+        }
+
+        # ---- 6i. Cooler (condenser) ------------------------------------------
+        clr = components["cooler"]
+        m_cf = clr["cold_side"]["mass_flow"]
+        wf_hot_in_state = clr["hot_side"]["state_in"]
+        wf_hot_out_state = clr["hot_side"]["state_out"]
+        if hasattr(wf_hot_in_state, "T") and hasattr(wf_hot_out_state, "T") and (wf_hot_in_state.T < wf_hot_out_state.T):
+            wf_hot_in_state, wf_hot_out_state = wf_hot_out_state, wf_hot_in_state
+
+        cf_in_state = clr["cold_side"]["state_in"]
+        cf_out_state = clr["cold_side"]["state_out"]
+        if hasattr(cf_in_state, "T") and hasattr(cf_out_state, "T") and (cf_in_state.T > cf_out_state.T):
+            cf_in_state, cf_out_state = cf_out_state, cf_in_state
+
+        e_clr_hot_in = e_wf(wf_hot_in_state)
+        e_clr_hot_out = e_wf(wf_hot_out_state)
+        e_clr_cold_in = e_cf(cf_in_state)
+        e_clr_cold_out = e_cf(cf_out_state)
+
+        E_D_clr = (m_total * (e_clr_hot_in - e_clr_hot_out)
+                   + m_cf * (e_clr_cold_in - e_clr_cold_out))
+        E_given_wf = m_total * (e_clr_hot_in - e_clr_hot_out)
+        E_gained_cf = m_cf * (e_clr_cold_out - e_clr_cold_in)
+        eta_ex_clr = E_gained_cf / E_given_wf if E_given_wf != 0 else None
+
+        results.components["cooler"] = {
+            "E_D": float(E_D_clr),
+            "eta_exergy": float(eta_ex_clr) if eta_ex_clr is not None else None,
+            "E_in": float(E_given_wf),
+            "E_out": float(E_gained_cf),
+        }
+
+        # ---- 6j. Recuperator (if present in dual-pressure) -------------------
+        recup = components.get("recuperator", None)
+        if recup is not None:
+            e_rec_hot_in = e_wf(recup["hot_side"]["state_in"])
+            e_rec_hot_out = e_wf(recup["hot_side"]["state_out"])
+            e_rec_cold_in = e_wf(recup["cold_side"]["state_in"])
+            e_rec_cold_out = e_wf(recup["cold_side"]["state_out"])
+            m_rec_hot = recup["hot_side"]["mass_flow"]
+            m_rec_cold = recup["cold_side"]["mass_flow"]
+
+            E_D_rec = (m_rec_hot * (e_rec_hot_in - e_rec_hot_out)
+                       + m_rec_cold * (e_rec_cold_in - e_rec_cold_out))
+            E_given = m_rec_hot * (e_rec_hot_in - e_rec_hot_out)
+            E_gained = m_rec_cold * (e_rec_cold_out - e_rec_cold_in)
+            eta_ex_rec = E_gained / E_given if E_given != 0 else None
+
+            results.components["recuperator"] = {
+                "E_D": float(E_D_rec),
+                "eta_exergy": float(eta_ex_rec) if eta_ex_rec is not None else None,
+                "E_in": float(E_given),
+                "E_out": float(E_gained),
+            }
+
+    else:
+        # ==================================================================
+        # SINGLE-PRESSURE ORC (original code)
+        # ==================================================================
+
+        # ---- 6a. Expander (turbine) ------------------------------------------
+        exp = components["expander"]
+        m_wf = exp["mass_flow"]
+        e_exp_in = e_wf(exp["state_in"])
+        e_exp_out = e_wf(exp["state_out"])
+        W_exp = exp["power"]
+        E_D_exp = m_wf * (e_exp_in - e_exp_out) - W_exp
+        eta_ex_exp = W_exp / (m_wf * (e_exp_in - e_exp_out)) if (e_exp_in - e_exp_out) != 0 else None
+
+        results.components["expander"] = {
+            "E_D": float(E_D_exp),
+            "eta_exergy": float(eta_ex_exp) if eta_ex_exp is not None else None,
+            "E_in": float(m_wf * (e_exp_in - e_exp_out)),
+            "E_out": float(W_exp),
+        }
+
+        # ---- 6b. Compressor (pump) -------------------------------------------
+        comp = components["compressor"]
+        e_comp_in = e_wf(comp["state_in"])
+        e_comp_out = e_wf(comp["state_out"])
+        W_comp = comp["power"]
+        E_D_comp = W_comp - m_wf * (e_comp_out - e_comp_in)
+        eta_ex_comp = (m_wf * (e_comp_out - e_comp_in) / W_comp
+                       if W_comp != 0 else None)
+
+        results.components["compressor"] = {
+            "E_D": float(E_D_comp),
+            "eta_exergy": float(eta_ex_comp) if eta_ex_comp is not None else None,
+            "E_in": float(W_comp),
+            "E_out": float(m_wf * (e_comp_out - e_comp_in)),
+        }
+
+        # ---- 6c. Heater (heat source HX) ------------------------------------
+        htr = components["heater"]
+        m_hf = htr["hot_side"]["mass_flow"]
+        hot_in_state = htr["hot_side"]["state_in"]
+        hot_out_state = htr["hot_side"]["state_out"]
+        if hasattr(hot_in_state, "T") and hasattr(hot_out_state, "T") and (hot_in_state.T < hot_out_state.T):
+            hot_in_state, hot_out_state = hot_out_state, hot_in_state
+
+        e_htr_hot_in = e_hf(hot_in_state)
+        e_htr_hot_out = e_hf(hot_out_state)
+        e_htr_cold_in = e_wf(htr["cold_side"]["state_in"])
+        e_htr_cold_out = e_wf(htr["cold_side"]["state_out"])
+
+        E_D_htr = (m_hf * (e_htr_hot_in - e_htr_hot_out)
+                   + m_wf * (e_htr_cold_in - e_htr_cold_out))
+        E_given_hot = m_hf * (e_htr_hot_in - e_htr_hot_out)
+        E_gained_cold = m_wf * (e_htr_cold_out - e_htr_cold_in)
+        eta_ex_htr = E_gained_cold / E_given_hot if E_given_hot != 0 else None
+
+        results.components["heater"] = {
+            "E_D": float(E_D_htr),
+            "eta_exergy": float(eta_ex_htr) if eta_ex_htr is not None else None,
+            "E_in": float(E_given_hot),
+            "E_out": float(E_gained_cold),
+        }
+
+        # ---- 6d. Cooler (condenser) ------------------------------------------
+        clr = components["cooler"]
+        m_wf_cooler = m_wf
+        m_cf = clr["cold_side"]["mass_flow"]
+        wf_hot_in_state = clr["hot_side"]["state_in"]
+        wf_hot_out_state = clr["hot_side"]["state_out"]
+        if hasattr(wf_hot_in_state, "T") and hasattr(wf_hot_out_state, "T") and (wf_hot_in_state.T < wf_hot_out_state.T):
+            wf_hot_in_state, wf_hot_out_state = wf_hot_out_state, wf_hot_in_state
+
+        cf_in_state = clr["cold_side"]["state_in"]
+        cf_out_state = clr["cold_side"]["state_out"]
+        if hasattr(cf_in_state, "T") and hasattr(cf_out_state, "T") and (cf_in_state.T > cf_out_state.T):
+            cf_in_state, cf_out_state = cf_out_state, cf_in_state
+
+        e_clr_hot_in = e_wf(wf_hot_in_state)
+        e_clr_hot_out = e_wf(wf_hot_out_state)
+        e_clr_cold_in = e_cf(cf_in_state)
+        e_clr_cold_out = e_cf(cf_out_state)
+
+        E_D_clr = (m_wf_cooler * (e_clr_hot_in - e_clr_hot_out)
+                   + m_cf * (e_clr_cold_in - e_clr_cold_out))
+        E_given_wf = m_wf_cooler * (e_clr_hot_in - e_clr_hot_out)
+        E_gained_cf = m_cf * (e_clr_cold_out - e_clr_cold_in)
+        eta_ex_clr = E_gained_cf / E_given_wf if E_given_wf != 0 else None
+
+        results.components["cooler"] = {
+            "E_D": float(E_D_clr),
+            "eta_exergy": float(eta_ex_clr) if eta_ex_clr is not None else None,
+            "E_in": float(E_given_wf),
+            "E_out": float(E_gained_cf),
+        }
+
+        # ---- 6e. Recuperator (if present) ------------------------------------
+        recup = components.get("recuperator", None)
+        if recup is not None:
+            e_rec_hot_in = e_wf(recup["hot_side"]["state_in"])
+            e_rec_hot_out = e_wf(recup["hot_side"]["state_out"])
+            e_rec_cold_in = e_wf(recup["cold_side"]["state_in"])
+            e_rec_cold_out = e_wf(recup["cold_side"]["state_out"])
+            m_rec_hot = recup["hot_side"]["mass_flow"]
+            m_rec_cold = recup["cold_side"]["mass_flow"]
+
+            E_D_rec = (m_rec_hot * (e_rec_hot_in - e_rec_hot_out)
+                       + m_rec_cold * (e_rec_cold_in - e_rec_cold_out))
+            E_given = m_rec_hot * (e_rec_hot_in - e_rec_hot_out)
+            E_gained = m_rec_cold * (e_rec_cold_out - e_rec_cold_in)
+            eta_ex_rec = E_gained / E_given if E_given != 0 else None
+
+            results.components["recuperator"] = {
+                "E_D": float(E_D_rec),
+                "eta_exergy": float(eta_ex_rec) if eta_ex_rec is not None else None,
+                "E_in": float(E_given),
+                "E_out": float(E_gained),
+            }
 
     # ---- 6f. Heat-source pump -----------------------------------------------
     hsp = components["heat_source_pump"]
@@ -771,14 +1020,33 @@ def perform_exergy_analysis(cycle_object, config_file=None, T0=None, p0=None):
     # =========================================================================
     E_D_total = sum(c["E_D"] for c in results.components.values())
 
-    # Exergy fuel = exergy change of the heat source across the heater
-    E_fuel = m_hf * (e_hf(htr["hot_side"]["state_in"])
-                     - e_hf(htr["hot_side"]["state_out"]))
+    # Exergy fuel = exergy change of the heat source across ALL brine-side HXs
+    # For dual pressure: brine enters HP evaporator and exits preheater
+    # For single pressure: brine enters and exits the heater
+    if is_dual:
+        # Brine inlet = HP evaporator hot-side inlet (hottest point)
+        brine_in = components["hp_evaporator"]["hot_side"]["state_in"]
+        if hasattr(brine_in, "T"):
+            brine_out_state = components["preheater"]["hot_side"]["state_out"]
+            if brine_in.T < brine_out_state.T:
+                brine_in = components["hp_evaporator"]["hot_side"]["state_out"]
+                brine_out_state = components["preheater"]["hot_side"]["state_in"]
+        else:
+            brine_out_state = components["preheater"]["hot_side"]["state_out"]
+        
+        # Use preheater hot-side outlet as brine exit (coldest brine point)
+        E_fuel = m_hf * (e_hf(brine_in) - e_hf(brine_out_state))
+    else:
+        htr = components["heater"]
+        E_fuel = m_hf * (e_hf(htr["hot_side"]["state_in"])
+                         - e_hf(htr["hot_side"]["state_out"]))
 
     # Exergy product = net power output (from ThermOpt)
     E_product = W_net_system
 
     # Exergy loss = exergy gained by cooling water in condenser
+    clr = components["cooler"]
+    m_cf = clr["cold_side"]["mass_flow"]
     E_loss_cooler = m_cf * (e_cf(clr["cold_side"]["state_out"])
                             - e_cf(clr["cold_side"]["state_in"]))
 
@@ -879,9 +1147,16 @@ def plot_heat_source_utilization(
     if T_exit_range is None:
         with open(config_file, "r") as f:
             cfg = yaml.safe_load(f)
-        dv = cfg["problem_formulation"]["design_variables"]["heat_source_exit_temperature"]
-        T_min = _eval_yaml_expr(dv["min"])
-        T_max = _eval_yaml_expr(dv["max"])
+        dv = cfg["problem_formulation"]["design_variables"]
+        if "heat_source_exit_temperature" not in dv:
+            raise ValueError(
+                "Utilization curve requires 'heat_source_exit_temperature' as a "
+                "design variable. The dual-pressure ORC computes brine exit "
+                "temperature from the energy balance — provide T_exit_range "
+                "manually or use a different sweep approach."
+            )
+        T_min = _eval_yaml_expr(dv["heat_source_exit_temperature"]["min"])
+        T_max = _eval_yaml_expr(dv["heat_source_exit_temperature"]["max"])
     else:
         T_min, T_max = T_exit_range
 
@@ -902,6 +1177,13 @@ def plot_heat_source_utilization(
         "power_recuperated": cycle_power_recuperated.evaluate_cycle,
     }
 
+    # Try to import dual pressure if available
+    try:
+        from thermopt.cycles import cycle_power_dual_pressure
+        topology_map["dual_pressure"] = cycle_power_dual_pressure.evaluate_cycle
+    except ImportError:
+        pass
+
     if topology not in topology_map:
         raise ValueError(
             f"Utilization curve not yet supported for topology '{topology}'. "
@@ -916,7 +1198,7 @@ def plot_heat_source_utilization(
     eta_cycle = []
     W_net = []
     T_valid = []
-    T_opt = float(optimal_x_dict["heat_source_exit_temperature"])
+    T_opt = float(optimal_x_dict.get("heat_source_exit_temperature", (T_min + T_max) / 2))
 
     for T_exit in T_exit_array:
         try:

@@ -45,6 +45,7 @@ def plot_TQ_diagram(cycle, component_name, savefig=True, filename=None, output_d
         "hp_evaporator": "HP Evaporator",
         "lp_evaporator": "LP Evaporator",
         "preheater": "Preheater",
+        "recuperator": "Recuperator",
     }
     display_name = display_names.get(component_name, component_name.capitalize())
 
@@ -81,7 +82,6 @@ def plot_TQ_diagram(cycle, component_name, savefig=True, filename=None, output_d
     pinch_Tcold = T_cold_C[pinch_idx]
 
     # Console summary
-    eff = data["energy_analysis"]
     print("\n" + 80*"─")
     print(f"  {display_name} T–Q diagram summary")
     print(80*"─")
@@ -89,8 +89,6 @@ def plot_TQ_diagram(cycle, component_name, savefig=True, filename=None, output_d
     print(f"  Hot-side inlet  → outlet : {T_hot_C[-1]:.1f} → {T_hot_C[0]:.1f} °C")
     print(f"  Cold-side inlet → outlet : {T_cold_C[0]:.1f} → {T_cold_C[-1]:.1f} °C")
     print(f"  Pinch-point ΔT           : {pinch_dT:.2f} °C  (at Q = {pinch_Q:.1f} kW)")
-    print(f"  Cycle efficiency          : {eff['cycle_efficiency']*100:.2f} %")
-    print(f"  System efficiency         : {eff['system_efficiency']*100:.2f} %")
     print(80*"─" + "\n")
 
     # ── Plot ──────────────────────────────────────────────────────────
