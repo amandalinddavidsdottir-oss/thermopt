@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 #---- importing post processing files:
-sys.path.insert(0, str(Path(__file__).resolve().parent / "shared_utilities"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "shared_utilities"))
 from exergy_analysis import perform_exergy_analysis, plot_heat_source_utilization
 from plot_TQ_diagram import plot_TQ_diagram
 from turbine_macchi_astolfi import evaluate_turbine_efficiency
