@@ -19,6 +19,9 @@ def evaluate_cycle(
     variables = copy.deepcopy(variables)
     parameters = copy.deepcopy(parameters)
 
+    # Detect mass-flow mode vs net-power mode
+    mass_flow_mode = "well_mass_flow_rate" in parameters
+
     # Initialize fluid objects
     working_fluid = cpx.Fluid(
         **parameters.pop("working_fluid"), identifier="working_fluid"
@@ -66,6 +69,10 @@ def evaluate_cycle(
     else:
         recuperator_effectiveness = 0.0
 
+    # In mass-flow mode, expander mass flow rate is a design variable
+    if mass_flow_mode:
+        expander_mass_flow_rate = variables.pop("expander_mass_flow_rate")
+
     # Evaluate  compressor
     dp = (1.0 - dp_heater_c) * (1.0 - dp_recup_c)
     compressor_outlet_p = expander_inlet_p / dp
@@ -85,14 +92,25 @@ def evaluate_cycle(
     expander_outlet_p = compressor_inlet_p / dp
     expander_efficiency = parameters["expander"].pop("efficiency")
     expander_efficiency_type = parameters["expander"].pop("efficiency_type")
-    expander = expansion_process(
-        working_fluid,
-        expander_inlet_h,
-        expander_inlet_p,
-        expander_outlet_p,
-        expander_efficiency,
-        expander_efficiency_type,
-    )
+    if mass_flow_mode:
+        expander = expansion_process(
+            working_fluid,
+            expander_inlet_h,
+            expander_inlet_p,
+            expander_outlet_p,
+            expander_efficiency,
+            expander_efficiency_type,
+            mass_flow=expander_mass_flow_rate,
+        )
+    else:
+        expander = expansion_process(
+            working_fluid,
+            expander_inlet_h,
+            expander_inlet_p,
+            expander_outlet_p,
+            expander_efficiency,
+            expander_efficiency_type,
+        )
 
     # Evaluate recuperator
     eps = recuperator_effectiveness
@@ -211,12 +229,21 @@ def evaluate_cycle(
     )
 
     # Compute mass flow rates
-    W_net = parameters.pop("net_power")
     expander_work = expander["specific_work"]
     compression_work = compressor["specific_work"]
-    m_total = W_net / (expander_work - compression_work)
-    m_source = m_total * heater["mass_flow_ratio"]
-    m_sink = m_total / cooler["mass_flow_ratio"]
+    if mass_flow_mode:
+        # Mass-flow mode: well mass flow is given, compute net power
+        well_mass_flow_rate = parameters.pop("well_mass_flow_rate")
+        m_source = well_mass_flow_rate
+        m_total = m_source / heater["mass_flow_ratio"]
+        m_sink = m_total / cooler["mass_flow_ratio"]
+        W_net = (expander_work - compression_work) * m_total
+    else:
+        # Net-power mode: net power is given, compute mass flows
+        W_net = parameters.pop("net_power")
+        m_total = W_net / (expander_work - compression_work)
+        m_source = m_total * heater["mass_flow_ratio"]
+        m_sink = m_total / cooler["mass_flow_ratio"]
 
     # Add the mass flow to the components
     heater["hot_side"]["mass_flow"] = m_source
@@ -277,7 +304,15 @@ def evaluate_cycle(
     }
 
     # Evaluate objective function and constraints
-    output = {"components": components, "energy_analysis": energy_analysis}
+    # In mass-flow mode, expose variables so constraints can reference them
+    if mass_flow_mode:
+        output = {
+            "components": components,
+            "energy_analysis": energy_analysis,
+            "variables": {"expander_mass_flow_rate": expander_mass_flow_rate},
+        }
+    else:
+        output = {"components": components, "energy_analysis": energy_analysis}
     f = utilities.evaluate_objective_function(output, objective_function)
     c_eq, c_ineq, constraint_report = utilities.evaluate_constraints(output, constraints)
 

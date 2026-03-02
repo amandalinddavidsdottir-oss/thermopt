@@ -20,8 +20,11 @@ warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
 #  CONFIGURATION — change these two settings
 # ══════════════════════════════════════════════════════════════════════
 MODE = "optimize"  # "optimize" = single fluid  |  "sweep" = working fluid sweep
-CONFIG_FILE = Path(__file__).with_name("case_Toluene_simpleORC.yaml")
+#CONFIG_FILE = Path(__file__).with_name("case_Toluene_simpleORC.yaml")
 #CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_simpleORC.yaml")
+#WITH MASSFLOW RATE:
+#CONFIG_FILE = Path(__file__).with_name("case_Toluene_simpleORC_mass_flow.yaml")
+CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_simpleORC_mass_flow.yaml")
 SWEEP_OUTPUT_DIR = "results/fluid_sweep_BASIC_ORC"
 
 
@@ -41,6 +44,16 @@ def run_optimize(config_file):
 
     # ──────────────────────── VALIDATION CHECKS ───────────────────────
     run_validation_checks(cycle)
+
+    # ──────────────────────── MASS FLOW RATES ─────────────────────────
+    ea = cycle.problem.cycle_data["energy_analysis"]
+    print("\n" + "=" * 76)
+    print("  MASS FLOW RATES")
+    print("=" * 76)
+    print(f"  Well (heating fluid)               :  {ea['mass_flow_heating_fluid']:.2f} kg/s")
+    print(f"  Working fluid                      :  {ea['mass_flow_working_fluid']:.2f} kg/s")
+    print(f"  Cooling fluid                      :  {ea['mass_flow_cooling_fluid']:.2f} kg/s")
+    print("=" * 76 + "\n")
 
     # ── Post-processing ───────────────────────────────────────────
     graph_dir = os.path.join(cycle.out_dir, "graphs")
