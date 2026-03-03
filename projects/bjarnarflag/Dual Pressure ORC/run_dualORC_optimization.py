@@ -20,9 +20,14 @@ warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
 #  CONFIGURATION — change these two settings
 # ══════════════════════════════════════════════════════════════════════
 MODE = "optimize"  # "optimize" = single fluid  |  "sweep" = working fluid sweep
-CONFIG_FILE = Path(__file__).with_name("case_Toluene_dualORC.yaml")
+#CONFIG_FILE = Path(__file__).with_name("case_Toluene_dualORC.yaml")
 #CONFIG_FILE = Path(__file__).with_name("case_Toluene_dualORC - 120reinjection.yaml")
+#With massflow specified:
+#CONFIG_FILE = Path(__file__).with_name("case_Toluene_dualORC_120reinjection_mass_flow.yaml")
+CONFIG_FILE = Path(__file__).with_name("case_Toluene_dualORC_mass_flow.yaml")
+
 SWEEP_OUTPUT_DIR = "results/fluid_sweep_BASIC_ORC"
+
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -41,6 +46,19 @@ def run_optimize(config_file):
 
     # ──────────────────────── VALIDATION CHECKS ───────────────────────
     run_validation_checks(cycle)
+
+    # ──────────────────────── MASS FLOW RATES ─────────────────────────
+    ea = cycle.problem.cycle_data["energy_analysis"]
+    print("\n" + "=" * 76)
+    print("  MASS FLOW RATES")
+    print("=" * 76)
+    print(f"  Well (heating fluid)               :  {ea['mass_flow_heating_fluid']:.2f} kg/s")
+    print(f"  Working fluid (total)              :  {ea['mass_flow_working_fluid']:.2f} kg/s")
+    print(f"    HP branch                        :  {ea['mass_flow_hp']:.2f} kg/s")
+    print(f"    LP branch                        :  {ea['mass_flow_lp']:.2f} kg/s")
+    print(f"  Split fraction (x)                 :  {ea['split_fraction']:.4f}")
+    print(f"  Cooling fluid                      :  {ea['mass_flow_cooling_fluid']:.2f} kg/s")
+    print("=" * 76 + "\n")
 
     # ────────────────────────────POST-PROCESSING ───────────────────────────────────────────
     graph_dir = os.path.join(cycle.out_dir, "graphs")

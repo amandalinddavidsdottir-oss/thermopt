@@ -13,6 +13,9 @@ def evaluate_cycle(variables, parameters, constraints, objective_function,
     variables = copy.deepcopy(variables)
     parameters = copy.deepcopy(parameters)
 
+    # Detect mass-flow mode vs net-power mode
+    mass_flow_mode = "well_mass_flow_rate" in parameters
+
     # Initialize fluids
     working_fluid = cpx.Fluid(**parameters.pop("working_fluid"),
                                identifier="working_fluid")
@@ -62,6 +65,10 @@ def evaluate_cycle(variables, parameters, constraints, objective_function,
     else:
         recuperator_effectiveness = 0.0
     x = mass_split_fraction
+
+    # In mass-flow mode, LP expander mass flow rate is a design variable
+    if mass_flow_mode:
+        lp_expander_mass_flow_rate = variables.pop("lp_expander_mass_flow_rate")
 
     # === 1. LP Pump (all fluid: state 1 → 2) ===
     # LP pump outlet pressure: back-calculated from the LP expander inlet
@@ -128,9 +135,15 @@ def evaluate_cycle(variables, parameters, constraints, objective_function,
         (1.0 - dp_cooler_h) * (1.0 - dp_recup_h))
     lp_exp_eff = parameters["lp_expander"].pop("efficiency")
     lp_exp_eff_type = parameters["lp_expander"].pop("efficiency_type")
-    lp_expander = expansion_process(
-        working_fluid, h_8, lp_expander_inlet_p,
-        lp_exp_outlet_p, lp_exp_eff, lp_exp_eff_type)
+    if mass_flow_mode:
+        lp_expander = expansion_process(
+            working_fluid, h_8, lp_expander_inlet_p,
+            lp_exp_outlet_p, lp_exp_eff, lp_exp_eff_type,
+            mass_flow=lp_expander_mass_flow_rate)
+    else:
+        lp_expander = expansion_process(
+            working_fluid, h_8, lp_expander_inlet_p,
+            lp_exp_outlet_p, lp_exp_eff, lp_exp_eff_type)
 
     # === 7. Recuperator evaluation ===
     # Now that the LP expander is evaluated, we can compute the recuperator.
@@ -279,17 +292,28 @@ def evaluate_cycle(variables, parameters, constraints, objective_function,
         counter_current=True, num_steps=num_el_cond)
 
     # === 14. Mass flow rates ===
-    W_net = parameters.pop("net_power")
     hp_turb_w = x * hp_expander["specific_work"]
     lp_turb_w = lp_expander["specific_work"]
     lp_pump_w = lp_pump["specific_work"]
     hp_pump_w = x * hp_pump["specific_work"]
     net_spec_w = (hp_turb_w + lp_turb_w) - (lp_pump_w + hp_pump_w)
-    m_total = W_net / net_spec_w
-    m_HP = x * m_total
-    m_LP = (1.0 - x) * m_total
-    m_brine = m_HP * hp_evaporator["mass_flow_ratio"]
-    m_sink = m_total / cooler["mass_flow_ratio"]
+    if mass_flow_mode:
+        # Mass-flow mode: well mass flow is given, compute net power
+        well_mass_flow_rate = parameters.pop("well_mass_flow_rate")
+        m_brine = well_mass_flow_rate
+        m_HP = m_brine / hp_evaporator["mass_flow_ratio"]
+        m_total = m_HP / x
+        m_LP = (1.0 - x) * m_total
+        m_sink = m_total / cooler["mass_flow_ratio"]
+        W_net = net_spec_w * m_total
+    else:
+        # Net-power mode: net power is given, compute mass flows
+        W_net = parameters.pop("net_power")
+        m_total = W_net / net_spec_w
+        m_HP = x * m_total
+        m_LP = (1.0 - x) * m_total
+        m_brine = m_HP * hp_evaporator["mass_flow_ratio"]
+        m_sink = m_total / cooler["mass_flow_ratio"]
 
     # === 15. Assign mass flows ===
     hp_evaporator["hot_side"]["mass_flow"] = m_brine
@@ -393,7 +417,15 @@ def evaluate_cycle(variables, parameters, constraints, objective_function,
     }
 
     # === 18. Objective function and constraints ===
-    output = {"components": components, "energy_analysis": energy_analysis}
+    # In mass-flow mode, expose variables so constraints can reference them
+    if mass_flow_mode:
+        output = {
+            "components": components,
+            "energy_analysis": energy_analysis,
+            "variables": {"lp_expander_mass_flow_rate": lp_expander_mass_flow_rate},
+        }
+    else:
+        output = {"components": components, "energy_analysis": energy_analysis}
     f = utilities.evaluate_objective_function(output, objective_function)
     c_eq, c_ineq, constraint_report = utilities.evaluate_constraints(
         output, constraints)

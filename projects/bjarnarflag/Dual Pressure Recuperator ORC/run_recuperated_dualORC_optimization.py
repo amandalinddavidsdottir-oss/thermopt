@@ -21,8 +21,11 @@ warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
 #  CONFIGURATION — change these two settings
 # ══════════════════════════════════════════════════════════════════════
 MODE = "optimize"  # "optimize" = single fluid  |  "sweep" = working fluid sweep
-CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC.yaml")
+#CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC.yaml")
 #CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC - 120reinjection.yaml")
+#With mass flow
+CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC_120reinjection_mass_flow.yaml")
+#CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC_mass_flow.yaml")
 SWEEP_OUTPUT_DIR = "results/fluid_sweep_BASIC_ORC"
 
 
