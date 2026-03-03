@@ -118,11 +118,32 @@ def evaluate_cycle(variables, parameters, constraints, objective_function,
 
     # === 4. HP Expander (state 6 → 7, P_HP → P_LP) ===
     hp_exp_outlet_p = lp_expander_inlet_p
-    hp_exp_eff = parameters["hp_expander"].pop("efficiency")
+    hp_exp_eff = parameters["hp_expander"].pop("efficiency", None)
     hp_exp_eff_type = parameters["hp_expander"].pop("efficiency_type")
-    hp_expander = expansion_process(
-        working_fluid, hp_expander_inlet_h, hp_expander_inlet_p,
-        hp_exp_outlet_p, hp_exp_eff, hp_exp_eff_type)
+
+    # Build data_in for correlation-based efficiency types
+    hp_exp_data_in = {}
+    if hp_exp_eff_type == "macchi-astolfi":
+        if not mass_flow_mode:
+            raise ValueError(
+                "Macchi-Astolfi efficiency requires mass-flow mode "
+                "(set well_mass_flow_rate instead of net_power in YAML)."
+            )
+        hp_exp_data_in["n_stages"] = parameters["hp_expander"].pop("n_stages")
+        if "RPM" in parameters["hp_expander"]:
+            hp_exp_data_in["RPM"] = parameters["hp_expander"].pop("RPM")
+
+    if mass_flow_mode:
+        # HP expander processes fraction x of total flow
+        hp_mass_flow = x * lp_expander_mass_flow_rate
+        hp_expander = expansion_process(
+            working_fluid, hp_expander_inlet_h, hp_expander_inlet_p,
+            hp_exp_outlet_p, hp_exp_eff, hp_exp_eff_type,
+            mass_flow=hp_mass_flow, data_in=hp_exp_data_in)
+    else:
+        hp_expander = expansion_process(
+            working_fluid, hp_expander_inlet_h, hp_expander_inlet_p,
+            hp_exp_outlet_p, hp_exp_eff, hp_exp_eff_type)
 
     # === 5. Mixing (state 7 + 4 → 8) ===
     h_7 = hp_expander["state_out"].h
@@ -133,13 +154,27 @@ def evaluate_cycle(variables, parameters, constraints, objective_function,
     # LP expander outlet pressure accounts for recuperator + cooler hot-side drops
     lp_exp_outlet_p = compressor_inlet_p / (
         (1.0 - dp_cooler_h) * (1.0 - dp_recup_h))
-    lp_exp_eff = parameters["lp_expander"].pop("efficiency")
+    lp_exp_eff = parameters["lp_expander"].pop("efficiency", None)
     lp_exp_eff_type = parameters["lp_expander"].pop("efficiency_type")
+
+    # Build data_in for correlation-based efficiency types
+    lp_exp_data_in = {}
+    if lp_exp_eff_type == "macchi-astolfi":
+        if not mass_flow_mode:
+            raise ValueError(
+                "Macchi-Astolfi efficiency requires mass-flow mode "
+                "(set well_mass_flow_rate instead of net_power in YAML)."
+            )
+        lp_exp_data_in["n_stages"] = parameters["lp_expander"].pop("n_stages")
+        if "RPM" in parameters["lp_expander"]:
+            lp_exp_data_in["RPM"] = parameters["lp_expander"].pop("RPM")
+
     if mass_flow_mode:
         lp_expander = expansion_process(
             working_fluid, h_8, lp_expander_inlet_p,
             lp_exp_outlet_p, lp_exp_eff, lp_exp_eff_type,
-            mass_flow=lp_expander_mass_flow_rate)
+            mass_flow=lp_expander_mass_flow_rate,
+            data_in=lp_exp_data_in)
     else:
         lp_expander = expansion_process(
             working_fluid, h_8, lp_expander_inlet_p,

@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 
 from scipy.integrate import solve_ivp
@@ -5,6 +6,7 @@ from scipy.integrate import solve_ivp
 # from .. import utilities
 
 from .turbomachinery_nondimensional import RadialTurbine, CentrifugalCompressor
+from .macchi_astolfi import macchi_astolfi_eta, compute_specific_speed
 
 import CoolProp.CoolProp as cp
 import jaxprop as props
@@ -372,9 +374,84 @@ def expansion_process(
         state_out = fluid.get_state(props.PT_INPUTS, p_out, T_out_expander, supersaturation=True, generalize_quality=True)        
         states = [state_in, state_out]
         data_out = turb.get_output_data()
+
+    elif efficiency_type == "macchi-astolfi":
+        # ── Macchi & Astolfi (2017) axial turbine correlation ──
+        # Requires mass_flow to compute volumetric flows → SP, Vr, Ns
+        if mass_flow is None:
+            raise ValueError(
+                "Macchi-Astolfi efficiency requires mass_flow. "
+                "Use mass-flow mode (well_mass_flow_rate in YAML)."
+            )
+
+        # Read correlation parameters from data_in
+        n_stages = int(data_in.get("n_stages", 3))
+        RPM = data_in.get("RPM", None)
+
+        # Compute isentropic enthalpy drop (already have state_in, state_out_is)
+        Dh_is = state_in.h - state_out_is.h
+
+        # Compute volumetric flow rates
+        V_in = mass_flow / state_in.rho
+        V_out_is = mass_flow / state_out_is.rho
+
+        # Non-dimensional parameters
+        SP = V_out_is**0.5 / Dh_is**0.25      # Size Parameter [m]
+        Vr = V_out_is / V_in                    # Volume Ratio [-]
+
+        # Evaluate correlation (SP clamped per Fig. 9.9b guidance)
+        eta, SP_eval, SP_clamped, Vr_out_of_range = macchi_astolfi_eta(
+            SP, Vr, n_stages)
+
+        # Print warnings for out-of-range conditions
+        if SP_clamped and SP > 1.0:
+            warnings.warn(
+                "Macchi-Astolfi: SP exceeds correlation range [0.02, 1.0]. "
+                "Using SP = 1.0 (efficiency plateaus at large SP, see Fig. 9.9b). "
+                "See turbine summary for details."
+            )
+        elif SP_clamped and SP < 0.02:
+            warnings.warn(
+                f"Macchi-Astolfi: SP = {SP:.4f} m below correlation range "
+                f"[0.02, 1.0]."
+            )
+        if Vr_out_of_range:
+            warnings.warn(
+                f"Macchi-Astolfi: Vr = {Vr:.2f} is outside the correlation "
+                f"range [1.2, 200]."
+            )
+
+        # Compute specific speed if RPM is specified
+        Ns = None
+        if RPM is not None:
+            Ns = compute_specific_speed(RPM, V_out_is, Dh_is)
+
+        # Compute outlet state using the correlation efficiency
+        # (same formula as the isentropic branch)
+        efficiency = eta
+        h_out = state_in.h - efficiency * (state_in.h - state_out_is.h)
+        state_out = fluid.get_state(
+            props.HmassP_INPUTS, h_out, p_out,
+            supersaturation=True, generalize_quality=True)
+        states = state_in + state_out
+
+        data_out = {
+            "isentropic_efficiency": eta,
+            "n_stages": n_stages,
+            "size_parameter": SP,
+            "size_parameter_eval": SP_eval,
+            "size_parameter_clamped": SP_clamped,
+            "volume_ratio": Vr,
+            "volume_ratio_out_of_range": Vr_out_of_range,
+            "specific_speed": Ns,
+            "RPM": RPM,
+        }
         
     else:
-        raise ValueError("Invalid efficiency_type. Use 'isentropic' or 'polytropic'.")
+        raise ValueError(
+            "Invalid efficiency_type. Use 'isentropic', 'polytropic', "
+            "'non-dimensional', or 'macchi-astolfi'."
+        )
 
     # Compute work
     isentropic_work = state_in.h - state_out_is.h
@@ -405,6 +482,13 @@ def expansion_process(
         "data_in": data_in,
         "data_out": data_in | data_out
     }
+
+    # For macchi-astolfi, expose SP, Vr, Ns at top level for constraint access
+    # (e.g. $components.hp_expander.specific_speed in YAML)
+    if efficiency_type == "macchi-astolfi":
+        result["size_parameter"] = data_out["size_parameter"]
+        result["volume_ratio"] = data_out["volume_ratio"]
+        result["specific_speed"] = data_out["specific_speed"]
 
     return result
 

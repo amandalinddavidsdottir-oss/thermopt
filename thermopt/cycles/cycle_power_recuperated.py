@@ -90,8 +90,21 @@ def evaluate_cycle(
     # Evaluate expander
     dp = (1.0 - dp_cooler_h) * (1.0 - dp_recup_h)
     expander_outlet_p = compressor_inlet_p / dp
-    expander_efficiency = parameters["expander"].pop("efficiency")
+    expander_efficiency = parameters["expander"].pop("efficiency", None)
     expander_efficiency_type = parameters["expander"].pop("efficiency_type")
+
+    # Build data_in for correlation-based efficiency types
+    expander_data_in = {}
+    if expander_efficiency_type == "macchi-astolfi":
+        if not mass_flow_mode:
+            raise ValueError(
+                "Macchi-Astolfi efficiency requires mass-flow mode "
+                "(set well_mass_flow_rate instead of net_power in YAML)."
+            )
+        expander_data_in["n_stages"] = parameters["expander"].pop("n_stages")
+        if "RPM" in parameters["expander"]:
+            expander_data_in["RPM"] = parameters["expander"].pop("RPM")
+
     if mass_flow_mode:
         expander = expansion_process(
             working_fluid,
@@ -101,6 +114,7 @@ def evaluate_cycle(
             expander_efficiency,
             expander_efficiency_type,
             mass_flow=expander_mass_flow_rate,
+            data_in=expander_data_in,
         )
     else:
         expander = expansion_process(
