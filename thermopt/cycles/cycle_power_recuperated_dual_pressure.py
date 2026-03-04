@@ -123,7 +123,7 @@ def evaluate_cycle(variables, parameters, constraints, objective_function,
 
     # Build data_in for correlation-based efficiency types
     hp_exp_data_in = {}
-    if hp_exp_eff_type == "macchi-astolfi":
+    if hp_exp_eff_type == "astolfi-stacking":
         if not mass_flow_mode:
             raise ValueError(
                 "Macchi-Astolfi efficiency requires mass-flow mode "
@@ -159,7 +159,7 @@ def evaluate_cycle(variables, parameters, constraints, objective_function,
 
     # Build data_in for correlation-based efficiency types
     lp_exp_data_in = {}
-    if lp_exp_eff_type == "macchi-astolfi":
+    if lp_exp_eff_type == "astolfi-stacking":
         if not mass_flow_mode:
             raise ValueError(
                 "Macchi-Astolfi efficiency requires mass-flow mode "

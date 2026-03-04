@@ -6,7 +6,7 @@ from scipy.integrate import solve_ivp
 # from .. import utilities
 
 from .turbomachinery_nondimensional import RadialTurbine, CentrifugalCompressor
-from .macchi_astolfi import macchi_astolfi_eta, compute_specific_speed
+from .macchi_astolfi import astolfi_stage_eta, compute_specific_speed
 
 import CoolProp.CoolProp as cp
 import jaxprop as props
@@ -375,82 +375,145 @@ def expansion_process(
         states = [state_in, state_out]
         data_out = turb.get_output_data()
 
-    elif efficiency_type == "macchi-astolfi":
-        # ── Macchi & Astolfi (2017) axial turbine correlation ──
-        # Requires mass_flow to compute volumetric flows → SP, Vr, Ns
+    elif efficiency_type == "astolfi-stacking":
+        # ── Astolfi PhD (2014) stage-stacking with Table 6.6 correlation ──
+        # Models multi-stage axial turbine with common RPM.
+        # Each stage efficiency = f(SP_stage, Vr_stage, Ns_stage).
+        # See Astolfi PhD thesis, section 6.1.5.
         if mass_flow is None:
             raise ValueError(
-                "Macchi-Astolfi efficiency requires mass_flow. "
+                "Astolfi-stacking efficiency requires mass_flow. "
                 "Use mass-flow mode (well_mass_flow_rate in YAML)."
             )
-
-        # Read correlation parameters from data_in
         n_stages = int(data_in.get("n_stages", 3))
         RPM = data_in.get("RPM", None)
-
-        # Compute isentropic enthalpy drop (already have state_in, state_out_is)
-        Dh_is = state_in.h - state_out_is.h
-
-        # Compute volumetric flow rates
-        V_in = mass_flow / state_in.rho
-        V_out_is = mass_flow / state_out_is.rho
-
-        # Non-dimensional parameters
-        SP = V_out_is**0.5 / Dh_is**0.25      # Size Parameter [m]
-        Vr = V_out_is / V_in                    # Volume Ratio [-]
-
-        # Evaluate correlation (SP clamped per Fig. 9.9b guidance)
-        eta, SP_eval, SP_clamped, Vr_out_of_range = macchi_astolfi_eta(
-            SP, Vr, n_stages)
-
-        # Print warnings for out-of-range conditions
-        if SP_clamped and SP > 1.0:
-            warnings.warn(
-                "Macchi-Astolfi: SP exceeds correlation range [0.02, 1.0]. "
-                "Using SP = 1.0 (efficiency plateaus at large SP, see Fig. 9.9b). "
-                "See turbine summary for details."
-            )
-        elif SP_clamped and SP < 0.02:
-            warnings.warn(
-                f"Macchi-Astolfi: SP = {SP:.4f} m below correlation range "
-                f"[0.02, 1.0]."
-            )
-        if Vr_out_of_range:
-            warnings.warn(
-                f"Macchi-Astolfi: Vr = {Vr:.2f} is outside the correlation "
-                f"range [1.2, 200]."
+        if RPM is None:
+            raise ValueError(
+                "Astolfi-stacking efficiency requires RPM in data_in."
             )
 
-        # Compute specific speed if RPM is specified
-        Ns = None
-        if RPM is not None:
-            Ns = compute_specific_speed(RPM, V_out_is, Dh_is)
+        # Equal pressure ratio per stage (Astolfi section 6.1.5)
+        beta_total = p_in / p_out
+        beta_stage = beta_total ** (1.0 / n_stages)
 
-        # Compute outlet state using the correlation efficiency
-        # (same formula as the isentropic branch)
-        efficiency = eta
-        h_out = state_in.h - efficiency * (state_in.h - state_out_is.h)
-        state_out = fluid.get_state(
-            props.HmassP_INPUTS, h_out, p_out,
-            supersaturation=True, generalize_quality=True)
+        # Intermediate pressures: p[0]=p_in, ..., p[n_stages]=p_out
+        p_stages = [p_in / (beta_stage ** i) for i in range(n_stages + 1)]
+        p_stages[-1] = p_out  # exact match
+
+        # Overall isentropic quantities (for reporting)
+        Dh_is_total = state_in.h - state_out_is.h
+        V_in_total = mass_flow / state_in.rho
+        V_out_is_total = mass_flow / state_out_is.rho
+        SP_total = V_out_is_total**0.5 / Dh_is_total**0.25
+        Vr_total = V_out_is_total / V_in_total
+        Ns_total = compute_specific_speed(RPM, V_out_is_total, Dh_is_total)
+
+        # Stage-by-stage loop
+        stage_data = []
+        stage_works = []
+        current_state = state_in
+        any_Vr_over = False
+        any_SP_clamped = False
+
+        for i in range(n_stages):
+            p_in_stg = p_stages[i]
+            p_out_stg = p_stages[i + 1]
+
+            # Inlet state for this stage
+            h_in_stg = current_state.h
+            s_in_stg = current_state.s
+            rho_in_stg = current_state.rho
+            T_in_stg = current_state.T
+
+            # Isentropic outlet of this stage
+            state_out_is_stg = fluid.get_state(
+                props.PSmass_INPUTS, p_out_stg, s_in_stg,
+                supersaturation=True, generalize_quality=True
+            )
+            h_out_is_stg = state_out_is_stg.h
+            rho_out_is_stg = state_out_is_stg.rho
+
+            # Non-dimensional parameters for this stage
+            V_in_stg = mass_flow / rho_in_stg
+            V_out_is_stg = mass_flow / rho_out_is_stg
+            Dh_is_stg = h_in_stg - h_out_is_stg
+
+            SP_stg = V_out_is_stg**0.5 / Dh_is_stg**0.25
+            Vr_stg = V_out_is_stg / V_in_stg
+            Ns_stg = compute_specific_speed(RPM, V_out_is_stg, Dh_is_stg)
+
+            # Evaluate Table 6.6 correlation
+            eta_stg, eta_raw_stg, SP_eval_stg, SP_clamp_stg, Vr_over_stg = (
+                astolfi_stage_eta(SP_stg, Vr_stg, Ns_stg)
+            )
+            if Vr_over_stg:
+                any_Vr_over = True
+            if SP_clamp_stg:
+                any_SP_clamped = True
+
+            # Real outlet of this stage
+            h_out_real_stg = h_in_stg - eta_stg * Dh_is_stg
+            state_out_real_stg = fluid.get_state(
+                props.HmassP_INPUTS, h_out_real_stg, p_out_stg,
+                supersaturation=True, generalize_quality=True
+            )
+
+            work_stg = h_in_stg - h_out_real_stg
+            stage_works.append(work_stg)
+
+            stage_data.append({
+                "stage": i + 1,
+                "p_in": p_in_stg,
+                "p_out": p_out_stg,
+                "T_in": T_in_stg,
+                "T_out_is": state_out_is_stg.T,
+                "T_out_real": state_out_real_stg.T,
+                "h_in": h_in_stg,
+                "h_out_is": h_out_is_stg,
+                "h_out_real": h_out_real_stg,
+                "s_in": s_in_stg,
+                "Dh_is": Dh_is_stg,
+                "SP": SP_stg,
+                "SP_eval": SP_eval_stg,
+                "SP_clamped": SP_clamp_stg,
+                "Vr": Vr_stg,
+                "Vr_over_limit": Vr_over_stg,
+                "Ns": Ns_stg,
+                "eta_stage": eta_stg,
+                "eta_raw": eta_raw_stg,
+                "work": work_stg,
+            })
+
+            # Advance to next stage
+            current_state = state_out_real_stg
+
+        # Overall efficiency
+        total_work = sum(stage_works)
+        eta_overall = total_work / Dh_is_total if Dh_is_total > 0 else 0.0
+
+        # Final outlet state is the real outlet of the last stage
+        state_out = current_state
+        efficiency = eta_overall
+        h_out = state_out.h
         states = state_in + state_out
 
         data_out = {
-            "isentropic_efficiency": eta,
+            "isentropic_efficiency": eta_overall,
             "n_stages": n_stages,
-            "size_parameter": SP,
-            "size_parameter_eval": SP_eval,
-            "size_parameter_clamped": SP_clamped,
-            "volume_ratio": Vr,
-            "volume_ratio_out_of_range": Vr_out_of_range,
-            "specific_speed": Ns,
+            "size_parameter": SP_total,
+            "size_parameter_eval": SP_total,
+            "size_parameter_clamped": any_SP_clamped,
+            "volume_ratio": Vr_total,
+            "volume_ratio_out_of_range": any_Vr_over,
+            "specific_speed": Ns_total,
             "RPM": RPM,
+            "stage_data": stage_data,
         }
-        
+
     else:
         raise ValueError(
             "Invalid efficiency_type. Use 'isentropic', 'polytropic', "
-            "'non-dimensional', or 'macchi-astolfi'."
+            "'non-dimensional', or 'astolfi-stacking'."
         )
 
     # Compute work
@@ -483,9 +546,9 @@ def expansion_process(
         "data_out": data_in | data_out
     }
 
-    # For macchi-astolfi, expose SP, Vr, Ns at top level for constraint access
+    # For correlation-based types, expose SP, Vr, Ns at top level
     # (e.g. $components.hp_expander.specific_speed in YAML)
-    if efficiency_type == "macchi-astolfi":
+    if efficiency_type == "astolfi-stacking":
         result["size_parameter"] = data_out["size_parameter"]
         result["volume_ratio"] = data_out["volume_ratio"]
         result["specific_speed"] = data_out["specific_speed"]

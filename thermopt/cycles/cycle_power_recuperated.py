@@ -95,10 +95,10 @@ def evaluate_cycle(
 
     # Build data_in for correlation-based efficiency types
     expander_data_in = {}
-    if expander_efficiency_type == "macchi-astolfi":
+    if expander_efficiency_type == "astolfi-stacking":
         if not mass_flow_mode:
             raise ValueError(
-                "Macchi-Astolfi efficiency requires mass-flow mode "
+                "Macchi-Astolfi / Astolfi-stacking efficiency requires mass-flow mode "
                 "(set well_mass_flow_rate instead of net_power in YAML)."
             )
         expander_data_in["n_stages"] = parameters["expander"].pop("n_stages")
