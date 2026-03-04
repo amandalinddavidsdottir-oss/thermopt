@@ -90,13 +90,13 @@ problem_formulation:
 
     # Two expanders — Macchi & Astolfi correlation
     hp_expander:
-      efficiency_type: "macchi-astolfi"
+      efficiency_type: "astolfi-stacking"
       n_stages: 3          # 1, 2, or 3
-      RPM: 3000            # 2-pole 50 Hz synchronous generator
+      RPM: 1500            # 2-pole 50 Hz synchronous generator
     lp_expander:
-      efficiency_type: "macchi-astolfi"
+      efficiency_type: "astolfi-stacking"
       n_stages: 3          # 1, 2, or 3
-      RPM: 3000            # 2-pole 50 Hz synchronous generator
+      RPM: 1500            # 2-pole 50 Hz synchronous generator
 
     # Two pumps
     lp_pump:

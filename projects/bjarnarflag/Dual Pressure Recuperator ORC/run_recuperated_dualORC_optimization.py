@@ -23,14 +23,14 @@ warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
 # ══════════════════════════════════════════════════════════════════════
 #  CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════
-MODE = "parametric"  # "optimize" | "sweep" | "parametric"
+MODE = "optimize"  # "optimize" | "sweep" | "parametric"
 
 #CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC.yaml")
 #CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC - 120reinjection.yaml")
 #With mass flow:
 #CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC_120reinjection_mass_flow.yaml")
 #CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC_mass_flow.yaml")
-#WITH Macchi Astolfi correlations:
+#WITH Astolfi stacking correlations:
 CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC_mass_flow_macchi_astolfi.yaml")
 
 SWEEP_OUTPUT_DIR = "results/fluid_sweep_RECUPERATED_DUAL_ORC"
@@ -39,8 +39,10 @@ SWEEP_OUTPUT_DIR = "results/fluid_sweep_RECUPERATED_DUAL_ORC"
 PARAMETRIC_CONFIGS = [
     Path(__file__).with_name("case_Toluene_recuperated_dualORC_mass_flow_macchi_astolfi.yaml"),
 ]
-PARAMETRIC_HP_STAGES = [1, 2, 3]
-PARAMETRIC_LP_STAGES = [1, 2, 3]
+PARAMETRIC_HP_STAGES = [2, 3]
+PARAMETRIC_LP_STAGES = [2, 3, 5, 7]
+PARAMETRIC_HP_RPMS = [1500]
+PARAMETRIC_LP_RPMS = [1500, 1000, 750]
 PARAMETRIC_OUTPUT_DIR = Path(__file__).parent / "results" / "parametric_study"
 
 
@@ -204,8 +206,12 @@ def run_sweep(config_file, output_dir):
 #  MODE 3: PARAMETRIC STUDY (HP_stages × LP_stages)
 # ══════════════════════════════════════════════════════════════════════
 
-def _modify_yaml_dual(yaml_text, hp_stages, lp_stages):
-    """Replace n_stages for HP and LP expanders independently."""
+def _modify_yaml_dual(yaml_text, hp_stages, lp_stages, hp_RPM=None, lp_RPM=None):
+    """
+    Replace n_stages and RPM for HP and LP expanders independently.
+    Each expander section is targeted separately using regex.
+    """
+    # Replace hp_expander n_stages
     yaml_text = re.sub(
         r'(hp_expander:.*?n_stages:\s*)\d+',
         rf'\g<1>{hp_stages}',
@@ -213,6 +219,7 @@ def _modify_yaml_dual(yaml_text, hp_stages, lp_stages):
         count=1,
         flags=re.DOTALL,
     )
+    # Replace lp_expander n_stages
     yaml_text = re.sub(
         r'(lp_expander:.*?n_stages:\s*)\d+',
         rf'\g<1>{lp_stages}',
@@ -220,10 +227,28 @@ def _modify_yaml_dual(yaml_text, hp_stages, lp_stages):
         count=1,
         flags=re.DOTALL,
     )
+    # Replace hp_expander RPM
+    if hp_RPM is not None:
+        yaml_text = re.sub(
+            r'(hp_expander:.*?RPM:\s*)\d+',
+            rf'\g<1>{hp_RPM}',
+            yaml_text,
+            count=1,
+            flags=re.DOTALL,
+        )
+    # Replace lp_expander RPM
+    if lp_RPM is not None:
+        yaml_text = re.sub(
+            r'(lp_expander:.*?RPM:\s*)\d+',
+            rf'\g<1>{lp_RPM}',
+            yaml_text,
+            count=1,
+            flags=re.DOTALL,
+        )
     return yaml_text
 
 
-def _extract_results_dual(cycle, config_file, hp_stages, lp_stages):
+def _extract_results_dual(cycle, config_file, hp_stages, lp_stages, hp_RPM, lp_RPM):
     """Extract key results from a converged dual-pressure cycle."""
     data = cycle.problem.cycle_data
     components = data["components"]
@@ -234,6 +259,9 @@ def _extract_results_dual(cycle, config_file, hp_stages, lp_stages):
         "config": config_name,
         "HP_n_stages": hp_stages,
         "LP_n_stages": lp_stages,
+        "HP_RPM": hp_RPM,
+        "LP_RPM": lp_RPM,
+        "shared_shaft": (hp_RPM == lp_RPM),
         "converged": True,
     }
 
@@ -263,6 +291,15 @@ def _extract_results_dual(cycle, config_file, hp_stages, lp_stages):
         result[f"{prefix}_p_out_bar"] = exp["state_out"].p / 1e5
         result[f"{prefix}_W_kW"] = exp.get("mass_flow", 0) * exp.get("specific_work", 0) / 1e3
 
+        # Per-stage diagnostics (astolfi-stacking)
+        stage_data = data_out.get("stage_data", [])
+        if stage_data:
+            etas = [sd["eta_stage"] for sd in stage_data]
+            ns_vals = [sd["Ns"] for sd in stage_data]
+            result[f"{prefix}_eta_min_stage"] = min(etas)
+            result[f"{prefix}_Ns_max"] = max(ns_vals)
+            result[f"{prefix}_any_stage_zero"] = any(e <= 0.0 for e in etas)
+
     # Recuperator
     if "recuperator" in components:
         Q_rec = energy.get("recuperator_heat_flow", 0) / 1e3
@@ -271,13 +308,13 @@ def _extract_results_dual(cycle, config_file, hp_stages, lp_stages):
     return result
 
 
-def _run_single_dual(config_file, hp_stages, lp_stages):
-    """Run one dual-pressure optimization with specific HP and LP stage counts."""
+def _run_single_dual(config_file, hp_stages, lp_stages, hp_RPM, lp_RPM):
+    """Run one dual-pressure optimization with specific HP/LP stage counts and RPMs."""
     yaml_text = Path(config_file).read_text()
-    yaml_text = _modify_yaml_dual(yaml_text, hp_stages, lp_stages)
+    yaml_text = _modify_yaml_dual(yaml_text, hp_stages, lp_stages, hp_RPM, lp_RPM)
 
     config_dir = Path(config_file).parent
-    tmp_path = config_dir / f"_tmp_parametric_hp{hp_stages}_lp{lp_stages}.yaml"
+    tmp_path = config_dir / f"_tmp_parametric_hp{hp_stages}_lp{lp_stages}_hprpm{hp_RPM}_lprpm{lp_RPM}.yaml"
 
     try:
         tmp_path.write_text(yaml_text)
@@ -303,10 +340,12 @@ def _run_single_dual(config_file, hp_stages, lp_stages):
                 "config": Path(config_file).stem,
                 "HP_n_stages": hp_stages,
                 "LP_n_stages": lp_stages,
+                "HP_RPM": hp_RPM,
+                "LP_RPM": lp_RPM,
                 "converged": False,
             }
 
-        return _extract_results_dual(cycle, config_file, hp_stages, lp_stages)
+        return _extract_results_dual(cycle, config_file, hp_stages, lp_stages, hp_RPM, lp_RPM)
 
     except Exception as e:
         print(f"    ✗ FAILED: {e}")
@@ -315,6 +354,8 @@ def _run_single_dual(config_file, hp_stages, lp_stages):
             "config": Path(config_file).stem,
             "HP_n_stages": hp_stages,
             "LP_n_stages": lp_stages,
+            "HP_RPM": hp_RPM,
+            "LP_RPM": lp_RPM,
             "converged": False,
             "error": str(e),
         }
@@ -323,23 +364,27 @@ def _run_single_dual(config_file, hp_stages, lp_stages):
             tmp_path.unlink()
 
 
-def run_parametric(config_files, hp_stages_list, lp_stages_list, output_dir):
-    """Run the full HP_stages × LP_stages parametric study."""
+def run_parametric(config_files, hp_stages_list, lp_stages_list,
+                   hp_rpms, lp_rpms, output_dir):
+    """Run the full HP_stages × LP_stages × HP_RPM × LP_RPM parametric study."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    warnings.filterwarnings("once", message="Macchi-Astolfi: SP exceeds")
+    warnings.filterwarnings("once", message="Astolfi-stacking: SP")
 
-    total_runs = len(config_files) * len(hp_stages_list) * len(lp_stages_list)
+    total_runs = (len(config_files) * len(hp_stages_list) * len(lp_stages_list)
+                  * len(hp_rpms) * len(lp_rpms))
     results = []
     run_count = 0
 
     print("=" * 76)
-    print("  PARAMETRIC STUDY — Recuperated Dual-Pressure Macchi & Astolfi")
+    print("  PARAMETRIC STUDY — Recuperated Dual-Pressure Astolfi Stage-Stacking")
     print("=" * 76)
     print(f"  Configs   : {len(config_files)}")
     print(f"  HP stages : {hp_stages_list}")
     print(f"  LP stages : {lp_stages_list}")
+    print(f"  HP RPMs   : {hp_rpms}")
+    print(f"  LP RPMs   : {lp_rpms}")
     print(f"  Total     : {total_runs} optimization runs")
     print("=" * 76 + "\n")
 
@@ -353,24 +398,29 @@ def run_parametric(config_files, hp_stages_list, lp_stages_list, output_dir):
             print(f"  ✗ File not found: {config_file}")
             continue
 
-        for hp_n in hp_stages_list:
-            for lp_n in lp_stages_list:
-                run_count += 1
-                print(f"\n  [{run_count}/{total_runs}] "
-                      f"HP={hp_n}-stage, LP={lp_n}-stage ... ",
-                      end="", flush=True)
+        for hp_rpm in hp_rpms:
+            for lp_rpm in lp_rpms:
+                shaft_label = "shared" if hp_rpm == lp_rpm else "separate"
+                for hp_n in hp_stages_list:
+                    for lp_n in lp_stages_list:
+                        run_count += 1
+                        print(f"\n  [{run_count}/{total_runs}] "
+                              f"HP={hp_n}stg@{hp_rpm}, LP={lp_n}stg@{lp_rpm} "
+                              f"({shaft_label}) ... ",
+                              end="", flush=True)
 
-                result = _run_single_dual(config_file, hp_n, lp_n)
-                results.append(result)
+                        result = _run_single_dual(config_file, hp_n, lp_n,
+                                                  hp_rpm, lp_rpm)
+                        results.append(result)
 
-                if result.get("converged", False):
-                    eta = result.get("eta_system", 0)
-                    eta_pct = eta * 100 if eta else 0
-                    W = result.get("W_net_kW", 0)
-                    Q_rec = result.get("Q_recuperator_kW", 0)
-                    print(f"✓  η_sys = {eta_pct:.2f}%,  W_net = {W:.0f} kW,  Q_rec = {Q_rec:.0f} kW")
-                else:
-                    print("✗  did not converge")
+                        if result.get("converged", False):
+                            eta = result.get("eta_system", 0)
+                            eta_pct = eta * 100 if eta else 0
+                            W = result.get("W_net_kW", 0)
+                            Q_rec = result.get("Q_recuperator_kW", 0)
+                            print(f"✓  η_sys = {eta_pct:.2f}%,  W_net = {W:.0f} kW,  Q_rec = {Q_rec:.0f} kW")
+                        else:
+                            print("✗  did not converge")
 
     # Save results
     df = pd.DataFrame(results)
@@ -387,10 +437,11 @@ def run_parametric(config_files, hp_stages_list, lp_stages_list, output_dir):
     print("  PARAMETRIC STUDY — RESULTS SUMMARY")
     print("=" * 76)
 
-    display_cols = ["config", "HP_n_stages", "LP_n_stages", "converged"]
+    display_cols = ["config", "HP_n_stages", "LP_n_stages",
+                    "HP_RPM", "LP_RPM", "shared_shaft", "converged"]
     for col in ["eta_system", "W_net_kW",
-                 "HP_eta_turbine", "HP_SP", "HP_Vr",
-                 "LP_eta_turbine", "LP_SP", "LP_Vr",
+                 "HP_eta_turbine", "HP_Ns_max", "HP_any_stage_zero",
+                 "LP_eta_turbine", "LP_Ns_max", "LP_any_stage_zero",
                  "split_fraction", "Q_recuperator_kW"]:
         if col in df.columns:
             display_cols.append(col)
@@ -432,6 +483,8 @@ if __name__ == "__main__":
             config_files=PARAMETRIC_CONFIGS,
             hp_stages_list=PARAMETRIC_HP_STAGES,
             lp_stages_list=PARAMETRIC_LP_STAGES,
+            hp_rpms=PARAMETRIC_HP_RPMS,
+            lp_rpms=PARAMETRIC_LP_RPMS,
             output_dir=PARAMETRIC_OUTPUT_DIR,
         )
 

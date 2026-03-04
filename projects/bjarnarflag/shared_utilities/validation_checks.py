@@ -13,14 +13,13 @@ Provides:
     2. Constraint activity summary (limits read from YAML)
     3. Energy balance closure
     4. State point phase verification
-    5. Turbine summary & verification (when macchi-astolfi is used)
+    5. Turbine summary & verification (when astolfi-stacking is used)
 
 Usage:
     from validation_checks import run_validation_checks
     issues = run_validation_checks(cycle, config_file="case.yaml")
 """
 
-import math
 import numpy as np
 import yaml
 
@@ -233,18 +232,33 @@ def _check_constraint_summary(components, energy, limits, verbose):
     if exp_name in components:
         exp_in = components[exp_name].get("state_in", None)
         if exp_in is not None and hasattr(exp_in, "superheating"):
-            sh = float(exp_in.superheating)
-            slack = sh - superheating_limit
-            if sh < superheating_limit - 0.1:
-                status = "⚠ VIOLATED"
-                issues += 1
-            elif abs(slack) < 0.2:
-                status = "BINDING"
+            # Check if expander inlet is supercritical
+            _is_supercritical = False
+            if hasattr(exp_in, 'p') and hasattr(exp_in, 'fluid_name'):
+                try:
+                    import CoolProp.CoolProp as CP
+                    p_crit = CP.PropsSI("pcrit", exp_in.fluid_name)
+                    if exp_in.p > p_crit:
+                        _is_supercritical = True
+                except Exception:
+                    pass
+
+            if _is_supercritical:
+                print(f"    {'Expander superheating':<36s} {'N/A':>10s} {'':>10s} {'':>10s}  "
+                      f"supercritical (no saturation line)")
             else:
-                status = "slack"
-            label = "HP expander" if exp_name == "hp_expander" else "Expander"
-            limit_str = f"> {superheating_limit:.1f} K"
-            print(f"    {label + ' superheating':<36s} {sh:10.2f} {limit_str:>10s} {slack:10.2f}  {status}")
+                sh = float(exp_in.superheating)
+                slack = sh - superheating_limit
+                if sh < superheating_limit - 0.1:
+                    status = "⚠ VIOLATED"
+                    issues += 1
+                elif abs(slack) < 0.2:
+                    status = "BINDING"
+                else:
+                    status = "slack"
+                label = "HP expander" if exp_name == "hp_expander" else "Expander"
+                limit_str = f"> {superheating_limit:.1f} K"
+                print(f"    {label + ' superheating':<36s} {sh:10.2f} {limit_str:>10s} {slack:10.2f}  {status}")
 
     # --- Brine reinjection temperature (dual-pressure only) ---
     T_brine_out = energy.get("brine_exit_temperature", None)
@@ -368,7 +382,48 @@ def _check_state_phases(components, verbose):
         is_vapor = any(x in phase_lower for x in
                        ["gas", "vapor", "superheated", "supercritical_gas"])
 
-        if expected == "liquid" and not is_liquid:
+        # Detect supercritical and near-critical states where CoolProp's
+        # phase label is unreliable:
+        #   1. p > p_crit: truly supercritical, no phase boundary exists
+        #   2. p < p_crit but T > T_sat(p) and T > T_crit: near-critical region
+        #      where CoolProp may label superheated vapor as "liquid" based on
+        #      density proximity to the critical point (e.g. HP expander outlet
+        #      in transcritical cycles)
+        is_supercritical = False
+        is_near_critical = False
+        if hasattr(state, 'p') and hasattr(state, 'T') and hasattr(state, 'fluid_name'):
+            try:
+                import CoolProp.CoolProp as CP
+                p_crit = CP.PropsSI("pcrit", state.fluid_name)
+                T_crit = CP.PropsSI("Tcrit", state.fluid_name)
+                if state.p > p_crit:
+                    is_supercritical = True
+                elif state.p > 0.3 * p_crit and state.T > T_crit:
+                    # Below p_crit but above T_crit: near-critical region
+                    # Verify it's actually superheated by checking T > T_sat
+                    try:
+                        T_sat = CP.PropsSI("T", "P", state.p, "Q", 1.0, state.fluid_name)
+                        if state.T > T_sat:
+                            is_near_critical = True
+                    except Exception:
+                        # T_sat lookup can fail very close to critical point
+                        is_near_critical = True
+            except Exception:
+                pass
+
+        if is_supercritical:
+            T_C = state.T - 273.15 if hasattr(state, 'T') else float('nan')
+            p_bar = state.p / 1e5 if hasattr(state, 'p') else float('nan')
+            if verbose:
+                print(f"    ✓ {label:<28s}: supercritical        "
+                      f"(T = {T_C:.1f} °C, p = {p_bar:.1f} bar > p_crit)")
+        elif is_near_critical:
+            T_C = state.T - 273.15
+            p_bar = state.p / 1e5
+            if verbose:
+                print(f"    ✓ {label:<28s}: near-critical vapor  "
+                      f"(T = {T_C:.1f} °C > T_crit, p = {p_bar:.1f} bar)")
+        elif expected == "liquid" and not is_liquid:
             print(f"    ⚠ {label:<28s}: phase = {phase}  (expected liquid!)")
             issues += 1
         elif expected == "vapor" and not is_vapor:
@@ -384,46 +439,6 @@ def _check_state_phases(components, verbose):
 # ══════════════════════════════════════════════════════════════════════════════
 #  CHECK 5 — TURBINE SUMMARY & VERIFICATION
 # ══════════════════════════════════════════════════════════════════════════════
-
-# Coefficients from Table 9.1 (Macchi & Astolfi, 2017)
-# Kept here so verification is independent of thermopt
-_MA_COEFFICIENTS = {
-    0:  (0.90831500,  0.923406,    0.932274),
-    1:  (-0.05248690, -0.0221021,  -0.01243),
-    2:  (-0.04799080, -0.0233814,  -0.018),
-    3:  (-0.01710380, -0.00844961, -0.00716),
-    4:  (-0.00244002, -0.0012978,  -0.00118),
-    5:  (0.0,         -0.00069293, -0.00044),
-    6:  (0.04961780,  0.0146911,   0.0),
-    7:  (-0.04894860, -0.0102795,  0.0),
-    8:  (0.01171650,  0.0,         -0.0016),
-    9:  (-0.00100473, 0.000317241, 0.000298),
-    10: (0.05645970,  0.0163959,   0.005959),
-    11: (-0.01859440, -0.00515265, -0.00163),
-    12: (0.01288860,  0.00358361,  0.001946),
-    13: (0.00178187,  0.000554726, 0.000163),
-    14: (-0.00021196, 0.0,         0.0),
-    15: (0.00078667,  0.000293607, 0.000211),
-}
-
-
-def _verify_eta(SP, Vr, n_stages):
-    """Recompute η from SP and Vr with same clamping as the optimizer."""
-    SP_eval = max(0.02, min(1.0, SP))
-    col = n_stages - 1  # 0-indexed: 1-stage=0, 2-stage=1, 3-stage=2
-
-    lnSP = math.log(SP_eval)
-    lnVr = math.log(Vr)
-
-    F = [
-        1.0, lnSP, lnSP**2, lnSP**3, lnSP**4,
-        Vr, lnVr, lnVr**2, lnVr**3, lnVr**4,
-        lnVr * lnSP, lnVr**2 * lnSP, lnVr * lnSP**2,
-        lnVr**3 * lnSP, lnVr**3 * lnSP**2, lnVr**2 * lnSP**3,
-    ]
-
-    eta = sum(_MA_COEFFICIENTS[i][col] * F[i] for i in range(16))
-    return max(0.0, min(1.0, eta))
 
 
 def _print_expander_summary(exp, label="Expander"):
@@ -453,7 +468,7 @@ def _print_expander_summary(exp, label="Expander"):
     print(f"  W_actual           : {W_gross/1e3:.1f} kW")
     print("-" * 76)
 
-    if eff_type == "macchi-astolfi":
+    if eff_type == "astolfi-stacking":
         n_stages = data_out.get("n_stages", "?")
         RPM = data_out.get("RPM", None)
         SP = data_out.get("size_parameter", None)
@@ -463,7 +478,7 @@ def _print_expander_summary(exp, label="Expander"):
         Ns = data_out.get("specific_speed", None)
         eta_opt = exp.get("efficiency", None)
 
-        print(f"  Efficiency mode    : Macchi-Astolfi (computed during optimization)")
+        print(f"  Efficiency mode    : Astolfi stage-stacking (Table 6.6, computed during optimization)")
         print(f"  Stages             : {n_stages}")
         if RPM is not None:
             print(f"  RPM                : {int(RPM)}")
@@ -483,9 +498,12 @@ def _print_expander_summary(exp, label="Expander"):
 
         if Vr is not None:
             print(f"  Vr                 : {Vr:.2f}")
-            if Vr < 1.2 or Vr > 200:
-                print(f"  ⚠  Vr = {Vr:.2f} is OUTSIDE the correlation "
-                      f"range [1.2, 200]")
+            # Per-stage Vr limit is 5; overall Vr can be much higher
+            Vr_per_stage = Vr ** (1.0 / n_stages) if isinstance(n_stages, int) and n_stages > 0 else Vr
+            print(f"  Vr per stage (est) : {Vr_per_stage:.2f}")
+            if Vr_per_stage > 5.0:
+                print(f"  ⚠  Vr/stage ≈ {Vr_per_stage:.2f} > 5 "
+                      f"(outside Table 6.6 single-stage validity)")
 
         if Ns is not None:
             print(f"  Ns                 : {Ns:.4f}")
@@ -493,17 +511,55 @@ def _print_expander_summary(exp, label="Expander"):
                 print(f"  ⚠  Ns = {Ns:.4f} is outside the typical optimal "
                       f"range [0.05, 0.20]")
 
-        # Cross-check
-        if SP is not None and Vr is not None and isinstance(n_stages, int):
-            eta_verify = _verify_eta(SP, Vr, n_stages)
-            diff = abs(eta_verify - eta_opt) * 100
+        # Per-stage breakdown
+        stage_data = data_out.get("stage_data", [])
+        if stage_data:
             print("-" * 76)
-            print(f"  ── Verification ──")
-            print(f"  η_is (recomputed)  : {eta_verify:.4f}  ({eta_verify*100:.2f}%)")
-            if diff < 0.01:
-                print(f"  ✓ Matches optimizer (Δη = {diff:.4f} pp)")
-            else:
-                print(f"  ⚠ Differs from optimizer by {diff:.2f} pp")
+            print(f"  ── Per-Stage Breakdown ──")
+            for sd in stage_data:
+                eta_pct = sd['eta_stage']*100
+                marker = ""
+                if sd['eta_stage'] <= 0.0:
+                    raw = sd.get('eta_raw', None)
+                    if raw is not None and raw > 1.0:
+                        marker = f"  ← ZERO WORK (polynomial returned {raw:.3f})"
+                    elif raw is not None and raw < 0.0:
+                        marker = f"  ← ZERO WORK (polynomial returned {raw:.3f})"
+                    else:
+                        marker = "  ← ZERO WORK"
+                print(f"    Stage {sd['stage']}: "
+                      f"η={eta_pct:.1f}%  "
+                      f"SP={sd['SP']:.4f}m  "
+                      f"Vr={sd['Vr']:.2f}  "
+                      f"Ns={sd['Ns']:.4f}  "
+                      f"Dh_is={sd['Dh_is']/1e3:.1f} kJ/kg{marker}")
+            # Flag problematic stages
+            for sd in stage_data:
+                issues = []
+                if sd['eta_stage'] <= 0.0:
+                    raw = sd.get('eta_raw', None)
+                    if raw is not None and raw > 1.0:
+                        issues.append(
+                            f"η set to 0% — polynomial returned {raw:.3f} "
+                            f"(above 1.0, extrapolation artifact at Ns={sd['Ns']:.4f})")
+                    elif raw is not None and raw < 0.0:
+                        issues.append(
+                            f"η set to 0% — polynomial returned {raw:.3f} "
+                            f"(negative, extrapolation artifact at Ns={sd['Ns']:.4f})")
+                    else:
+                        issues.append(
+                            f"η set to 0% — outside regression range "
+                            f"(Ns={sd['Ns']:.4f})")
+                if sd['Vr'] > 5.0:
+                    issues.append(f"Vr={sd['Vr']:.2f} > 5 (outside correlation validity)")
+                if sd.get('SP_clamped', False):
+                    issues.append(f"SP={sd['SP']:.4f} clamped to [0.02, 1.0]")
+                if sd['Ns'] > 0.25 and sd['eta_stage'] > 0.0:
+                    issues.append(f"Ns={sd['Ns']:.4f} above optimal range (0.10-0.15)")
+                elif sd['Ns'] < 0.05 and sd['eta_stage'] > 0.0:
+                    issues.append(f"Ns={sd['Ns']:.4f} below optimal range (0.10-0.15)")
+                if issues:
+                    print(f"  ⚠ Stage {sd['stage']}: " + "; ".join(issues))
 
     else:
         eta = exp.get("efficiency", None)

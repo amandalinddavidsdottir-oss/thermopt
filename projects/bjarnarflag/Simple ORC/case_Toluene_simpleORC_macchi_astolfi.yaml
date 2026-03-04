@@ -102,9 +102,9 @@ problem_formulation:
     # Turbine/Compressor/Pumps
     # ==========================================================================
     expander:
-      efficiency_type: "macchi-astolfi"
-      n_stages: 1          # 1, 2, or 3 — run separately for each
-      RPM: 3000            # 2-pole 50 Hz synchronous generator
+      efficiency_type: "astolfi-stacking"
+      n_stages: 2          # 1, 2, or 3 — run separately for each
+      RPM: 1500            # 2-pole 50 Hz synchronous generator
 
     compressor:
       efficiency: 0.85
