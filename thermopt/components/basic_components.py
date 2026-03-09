@@ -392,13 +392,50 @@ def expansion_process(
                 "Astolfi-stacking efficiency requires RPM in data_in."
             )
 
-        # Equal pressure ratio per stage (Astolfi section 6.1.5)
-        beta_total = p_in / p_out
-        beta_stage = beta_total ** (1.0 / n_stages)
+        # Equal volume ratio per stage (Astolfi section 6.1.5)
+        # Vr_stage = Vr_total^(1/n_stages)
+        # For each stage, find p_out_stg such that:
+        #   rho_in_stg / rho_out_is_stg = Vr_stage
+        # This requires a root-finding step per stage since real fluid
+        # density is a nonlinear function of pressure.
+        from scipy.optimize import brentq
 
-        # Intermediate pressures: p[0]=p_in, ..., p[n_stages]=p_out
-        p_stages = [p_in / (beta_stage ** i) for i in range(n_stages + 1)]
-        p_stages[-1] = p_out  # exact match
+        Vr_total_split = (mass_flow / state_out_is.rho) / (mass_flow / state_in.rho)
+        Vr_stage_target = Vr_total_split ** (1.0 / n_stages)
+
+        # Build stage pressure boundaries iteratively
+        p_stages = [p_in]
+        current_split_state = state_in
+        for i in range(n_stages - 1):
+            rho_in_stg = current_split_state.rho
+            s_in_stg = current_split_state.s
+            Vr_target = Vr_stage_target
+
+            def vr_residual(p_guess):
+                state_out_guess = fluid.get_state(
+                    props.PSmass_INPUTS, p_guess, s_in_stg,
+                    supersaturation=True, generalize_quality=True
+                )
+                return (rho_in_stg / state_out_guess.rho) - Vr_target
+
+            # Search between current pressure and final outlet pressure
+            p_lo = p_stages[-1] * 0.001
+            p_hi = p_stages[-1] * 0.9999
+            try:
+                p_stg_out = brentq(vr_residual, p_lo, p_hi, xtol=1.0, maxiter=100)
+            except ValueError:
+                # Fallback to equal pressure ratio if root finding fails
+                beta_total = p_in / p_out
+                beta_stage = beta_total ** (1.0 / n_stages)
+                p_stg_out = p_stages[-1] / beta_stage
+
+            p_stages.append(p_stg_out)
+            current_split_state = fluid.get_state(
+                props.PSmass_INPUTS, p_stg_out, s_in_stg,
+                supersaturation=True, generalize_quality=True
+            )
+
+        p_stages.append(p_out)  # final stage always ends at p_out
 
         # Overall isentropic quantities (for reporting)
         Dh_is_total = state_in.h - state_out_is.h
@@ -414,6 +451,7 @@ def expansion_process(
         current_state = state_in
         any_Vr_over = False
         any_SP_clamped = False
+        any_Ns_out_of_range = False
 
         for i in range(n_stages):
             p_in_stg = p_stages[i]
@@ -443,13 +481,15 @@ def expansion_process(
             Ns_stg = compute_specific_speed(RPM, V_out_is_stg, Dh_is_stg)
 
             # Evaluate Table 6.6 correlation
-            eta_stg, eta_raw_stg, SP_eval_stg, SP_clamp_stg, Vr_over_stg = (
+            eta_stg, SP_true_stg, SP_eval_stg, SP_clamp_stg, Vr_over_stg, Ns_oor_stg = (
                 astolfi_stage_eta(SP_stg, Vr_stg, Ns_stg)
             )
             if Vr_over_stg:
                 any_Vr_over = True
             if SP_clamp_stg:
                 any_SP_clamped = True
+            if Ns_oor_stg:
+                any_Ns_out_of_range = True
 
             # Real outlet of this stage
             h_out_real_stg = h_in_stg - eta_stg * Dh_is_stg
@@ -473,14 +513,14 @@ def expansion_process(
                 "h_out_real": h_out_real_stg,
                 "s_in": s_in_stg,
                 "Dh_is": Dh_is_stg,
-                "SP": SP_stg,
-                "SP_eval": SP_eval_stg,
+                "SP": SP_stg,           # true physical value
+                "SP_eval": SP_eval_stg, # clamped value used in correlation
                 "SP_clamped": SP_clamp_stg,
                 "Vr": Vr_stg,
                 "Vr_over_limit": Vr_over_stg,
                 "Ns": Ns_stg,
+                "Ns_out_of_range": Ns_oor_stg,  # flagged if outside [0.045, 0.20]
                 "eta_stage": eta_stg,
-                "eta_raw": eta_raw_stg,
                 "work": work_stg,
             })
 
@@ -497,15 +537,17 @@ def expansion_process(
         h_out = state_out.h
         states = state_in + state_out
 
+        SP_total_eval = max(0.02, min(1.0, SP_total))
         data_out = {
             "isentropic_efficiency": eta_overall,
             "n_stages": n_stages,
             "size_parameter": SP_total,
-            "size_parameter_eval": SP_total,
+            "size_parameter_eval": SP_total_eval,
             "size_parameter_clamped": any_SP_clamped,
             "volume_ratio": Vr_total,
             "volume_ratio_out_of_range": any_Vr_over,
             "specific_speed": Ns_total,
+            "specific_speed_out_of_range": any_Ns_out_of_range,
             "RPM": RPM,
             "stage_data": stage_data,
         }

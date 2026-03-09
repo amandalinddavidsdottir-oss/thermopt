@@ -59,6 +59,7 @@ problem_formulation:
     # WELL MASS FLOW RATE (replaces net_power for mass-flow mode)
     # ==========================================================================
     well_mass_flow_rate: 570.4  # kg/s — matches 45 MW net power case
+    #well_mass_flow_rate: 75.0  # Validation run — scaled down to get SP into valid range
     
     # ==========================================================================
     # SPECIAL POINTS
@@ -125,17 +126,17 @@ problem_formulation:
   design_variables:
     heat_source_exit_temperature:
       min: 373.15
-      max: 465.25
+      max: 475 
       value: 378.016
       
     heat_sink_exit_temperature:
-      min: 310.15
-      max: 315.15
-      value: 310.15
+      min: 305.15   # = 32°C — at least 10°C rise from 22°C inlet
+      max: 315.15 # = 42°C limit
+      value: 310.176
 
     compressor_inlet_pressure:
       min: 0.9*$working_fluid.liquid_at_ambient_temperature.p
-      max: 3.0*$working_fluid.liquid_at_ambient_temperature.p
+      max: 4.0*$working_fluid.liquid_at_ambient_temperature.p
       value: 7868.06
 
     compressor_inlet_enthalpy:
@@ -157,6 +158,12 @@ problem_formulation:
       min: 50.0
       max: 1500.0
       value: 445.24
+
+    #Boundaries if we have 75 kg/s massflow for validation:
+    #expander_mass_flow_rate:
+    #  min: 10.0      # was 50.0 — must be below expected wf flow
+    #  max: 200.0     # was 1500.0
+    #  value: 60.0    # warm start close to expected wf flow
 
 
   # ============================================================================
@@ -181,12 +188,15 @@ problem_formulation:
     # a minimum superheating of 1 K was imposed to ensure fully vapour conditions at the turbine inlet
     - variable: $components.expander.state_in.superheating
       type: ">"
-      value: 1
+      value: 5
+      normalize: True
 
-    # ── Mass-flow mode: ensure expander mass flow equals cycle mass flow ──
-    - variable: ($components.expander.mass_flow - $variables.expander_mass_flow_rate)
+# Ratio formulation (= 1) instead of difference (= 0) to allow normalization, ensuring consistent constraint scaling for SLSQP.
+# ── Mass-flow mode: ensure expander mass flow equals cycle mass flow ──
+    - variable: $components.expander.mass_flow / $variables.expander_mass_flow_rate
       type: "="
-      value: 0.0
+      value: 1.0
+      normalize: True
 
 
 

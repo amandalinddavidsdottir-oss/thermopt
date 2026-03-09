@@ -22,7 +22,7 @@ warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
 # ══════════════════════════════════════════════════════════════════════
 #  CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════
-MODE = "optimize"  # "optimize" | "sweep" | "parametric"
+MODE = "parametric"  # "optimize" | "sweep" | "parametric"
 
 #CONFIG_FILE = Path(__file__).with_name("case_Toluene_simpleORC.yaml")
 #CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_simpleORC.yaml")
@@ -43,7 +43,7 @@ PARAMETRIC_CONFIGS = [
     # Path(__file__).with_name("case_Toluene_recuperated_dual_pressure_macchi_astolfi.yaml"),
 ]
 PARAMETRIC_STAGES = [1, 2, 3, 4, 5, 6, 7]
-PARAMETRIC_RPMS = [3000, 1500]
+PARAMETRIC_RPMS = [1000, 1500, 3000]
 PARAMETRIC_OUTPUT_DIR = Path(__file__).parent / "results" / "parametric_study"
 
 
@@ -184,9 +184,14 @@ def _extract_results(cycle, config_file, n_stages, RPM):
             result[f"{prefix}_SP_clamped"] = data_out.get("size_parameter_clamped", False)
             result[f"{prefix}_Vr"] = data_out.get("volume_ratio", None)
             result[f"{prefix}_Ns"] = data_out.get("specific_speed", None)
+            result[f"{prefix}_Ns_out_of_range"] = data_out.get("specific_speed_out_of_range", False)
             result[f"{prefix}_Dh_is_kJ_kg"] = exp.get("isentropic_work", 0) / 1e3
             result[f"{prefix}_p_in_bar"] = exp["state_in"].p / 1e5
             result[f"{prefix}_p_out_bar"] = exp["state_out"].p / 1e5
+            # Per-stage Ns values for detailed diagnostics
+            stage_data = data_out.get("stage_data", [])
+            result[f"{prefix}_stage_Ns"] = [s.get("Ns") for s in stage_data]
+            result[f"{prefix}_stage_Ns_flags"] = [s.get("Ns_out_of_range", False) for s in stage_data]
     else:
         exp = components["expander"]
         data_out = exp.get("data_out", {})
@@ -195,9 +200,14 @@ def _extract_results(cycle, config_file, n_stages, RPM):
         result["SP_clamped"] = data_out.get("size_parameter_clamped", False)
         result["Vr"] = data_out.get("volume_ratio", None)
         result["Ns"] = data_out.get("specific_speed", None)
+        result["Ns_out_of_range"] = data_out.get("specific_speed_out_of_range", False)
         result["Dh_is_kJ_kg"] = exp.get("isentropic_work", 0) / 1e3
         result["p_in_bar"] = exp["state_in"].p / 1e5
         result["p_out_bar"] = exp["state_out"].p / 1e5
+        # Per-stage Ns values for detailed diagnostics
+        stage_data = data_out.get("stage_data", [])
+        result["stage_Ns"] = [s.get("Ns") for s in stage_data]
+        result["stage_Ns_flags"] = [s.get("Ns_out_of_range", False) for s in stage_data]
 
     # Recuperator (if present)
     if "recuperator" in components:
@@ -205,6 +215,49 @@ def _extract_results(cycle, config_file, n_stages, RPM):
         result["Q_recuperator_kW"] = Q_rec
 
     return result
+
+
+def _check_ns_validity(result):
+    """
+    Check whether any stage had Ns outside [0.045, 0.20].
+
+    Uses the specific_speed_out_of_range flag set by the Astolfi component,
+    which is True if ANY single stage exceeded the regression bounds.
+    Drills into per-stage data to report exactly which stages were invalid.
+
+    Returns a human-readable problem string, or None if everything is valid.
+    """
+    problems = []
+
+    # Detect which expanders are present
+    expanders = []
+    if "Ns_out_of_range" in result:
+        expanders.append(("", "expander"))
+    for prefix in ["HP", "LP"]:
+        if f"{prefix}_Ns_out_of_range" in result:
+            expanders.append((f"{prefix}_", prefix))
+
+    for key_prefix, label in expanders:
+        if not result.get(f"{key_prefix}Ns_out_of_range", False):
+            continue  # all stages valid for this expander
+
+        # Identify which specific stages were out of range
+        stage_ns    = result.get(f"{key_prefix}stage_Ns", [])
+        stage_flags = result.get(f"{key_prefix}stage_Ns_flags", [])
+
+        bad_stages = []
+        for i, (ns, flag) in enumerate(zip(stage_ns, stage_flags)):
+            if flag:
+                ns_str = f"{ns:.3f}" if ns is not None else "?"
+                bad_stages.append(f"stage {i+1} (Ns={ns_str})")
+
+        if bad_stages:
+            problems.append(f"{label}: {', '.join(bad_stages)}")
+        else:
+            # Top-level flag set but no stage detail available
+            problems.append(f"{label}: Ns out of range (no stage detail available)")
+
+    return "; ".join(problems) if problems else None
 
 
 def _run_single(config_file, n_stages, RPM):
@@ -278,6 +331,7 @@ def run_parametric(config_files, stages, rpms, output_dir):
     print(f"  Stages  : {stages}")
     print(f"  RPMs    : {rpms}")
     print(f"  Total   : {total_runs} optimization runs")
+    print(f"  Ns valid range : [0.045, 0.20]  — results outside this are discarded")
     print("=" * 76 + "\n")
 
     for config_file in config_files:
@@ -298,15 +352,24 @@ def run_parametric(config_files, stages, rpms, output_dir):
                       end="", flush=True)
 
                 result = _run_single(config_file, n_stages, RPM)
-                results.append(result)
 
                 if result.get("converged", False):
-                    eta = result.get("eta_system", result.get("HP_eta_turbine", 0))
-                    eta_pct = eta * 100 if eta else 0
-                    W = result.get("W_net_kW", 0)
-                    print(f"✓  η_sys = {eta_pct:.2f}%,  W_net = {W:.0f} kW")
+                    ns_problem = _check_ns_validity(result)
+                    if ns_problem:
+                        # Correlation was evaluated outside its regression range —
+                        # the result is meaningless and must not be used
+                        result["converged"] = False
+                        result["skip_reason"] = f"Ns out of range: {ns_problem}"
+                        print(f"✗  INVALID — Ns out of range: {ns_problem}")
+                    else:
+                        eta = result.get("eta_system", result.get("HP_eta_turbine", 0))
+                        eta_pct = eta * 100 if eta else 0
+                        W = result.get("W_net_kW", 0)
+                        print(f"✓  η_sys = {eta_pct:.2f}%,  W_net = {W:.0f} kW")
                 else:
                     print("✗  did not converge")
+
+                results.append(result)
 
     # Save results
     df = pd.DataFrame(results)
@@ -325,7 +388,7 @@ def run_parametric(config_files, stages, rpms, output_dir):
 
     display_cols = ["config", "n_stages", "RPM", "converged"]
     for col in ["eta_system", "eta_turbine", "W_net_kW", "SP", "Vr", "Ns",
-                 "HP_eta_turbine", "LP_eta_turbine"]:
+                 "HP_eta_turbine", "LP_eta_turbine", "skip_reason"]:
         if col in df.columns:
             display_cols.append(col)
 
