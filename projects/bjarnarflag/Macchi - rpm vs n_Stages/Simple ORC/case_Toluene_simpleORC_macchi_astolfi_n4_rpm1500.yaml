@@ -1,0 +1,242 @@
+solver_options: 
+  library: scipy
+  method: slsqp
+  derivative_method: 2-point 
+  derivative_abs_step: 1e-6
+  print_convergence: True 
+  plot_convergence: False
+  logger: None
+  update_on: gradient
+  tolerance: 1e-6 
+  max_iterations: 200
+  problem_scale: 20
+  callbacks:
+    save_plot: True
+    save_config: True
+    save_report: True
+    plot_cycle: True
+    plot_convergence: False
+
+
+problem_formulation:
+
+  cycle_topology: simple
+
+  plot_settings:
+    pinch_point_diagram: False
+    fluid: 
+      plot_saturation_line: True
+      plot_critical_point: True
+      plot_quality_isolines: True
+      plot_pseudocritical_line: False
+      plot_triple_point_liquid: False
+      plot_triple_point_vapor: False
+    diagrams:
+      - x_prop: s
+        y_prop: T
+        x_scale: linear
+        y_scale: linear
+
+
+  fixed_parameters:
+
+    working_fluid:
+      name: Toluene
+      backend: HEOS
+      exceptions: True
+
+    heating_fluid:
+        name: water
+        backend: HEOS
+        exceptions: True
+
+    cooling_fluid:
+      name: water
+      backend: HEOS
+      exceptions: True
+
+    well_mass_flow_rate: 570.4  # kg/s
+
+    special_points:
+      ambient_pressure: 101325  
+      ambient_temperature: 20.0 + 273.15
+      maximum_temperature: 470
+    
+    heat_source:
+      inlet_temperature: 480.25
+      minimum_temperature: 373.15
+      inlet_pressure: 1801000
+      exit_pressure: 1801000
+    
+    heat_sink:
+      inlet_temperature: 295.15
+      inlet_pressure: 101325
+      exit_pressure: 101325
+
+    heater:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+
+    cooler:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+
+    expander:
+      efficiency_type: "astolfi-stacking"
+      n_stages: 4          # n=4 → 3 intermediate pressure variables
+      RPM: 1500            # 4-pole 50 Hz synchronous generator
+
+    compressor:
+      efficiency: 0.85
+      efficiency_type: "isentropic"
+
+    heat_source_pump:
+      efficiency: 0.80
+      efficiency_type: "isentropic"
+
+    heat_sink_pump:
+      efficiency: 0.80
+      efficiency_type: "isentropic"
+
+
+  # ============================================================================
+  # DESIGN VARIABLES
+  # ============================================================================
+  design_variables:
+    heat_source_exit_temperature:
+      min: 373.15
+      max: 475 
+      value: 401.92985284239
+      
+    heat_sink_exit_temperature:
+      min: 305.15
+      max: 315.15
+      value: 308.212181686243
+
+    compressor_inlet_pressure:
+      min: 0.9*$working_fluid.liquid_at_ambient_temperature.p
+      max: 6.0*$working_fluid.liquid_at_ambient_temperature.p
+      value: 4.597446*$working_fluid.liquid_at_ambient_temperature.p
+
+    compressor_inlet_enthalpy:
+      min: 0.01*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      max:  0.15*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      value: 0.016221*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+    
+    expander_inlet_pressure:
+      min: 0.05*$working_fluid.triple_point_vapor.p
+      max: 0.8*$working_fluid.critical_point.p
+      value: 0.078573*$working_fluid.critical_point.p
+
+    expander_inlet_enthalpy:
+      min: 0.80*$working_fluid.gas_at_maximum_temperature.h 
+      max: 1*$working_fluid.gas_at_maximum_temperature.h
+      value: 0.865730*$working_fluid.gas_at_maximum_temperature.h
+
+    expander_mass_flow_rate:
+      min: 50.0
+      max: 1500.0
+      value: 352.377854972148
+
+    # ── Intermediate stage pressures (n_stages=4 → 3 intermediate pressures) ──
+    # Warm starts spaced geometrically between p_cond and p_evap:
+    #   p1 ~ 250000^(3/4) * 8000^(1/4) ~ 95000 Pa
+    #   p2 ~ 250000^(2/4) * 8000^(2/4) ~ 45000 Pa  (geometric mean)
+    #   p3 ~ 250000^(1/4) * 8000^(3/4) ~ 17000 Pa
+    expander_intermediate_pressure_1:
+      min: 0.9*$working_fluid.liquid_at_ambient_temperature.p
+      max: 0.8*$working_fluid.critical_point.p
+      value: 0.045781*$working_fluid.critical_point.p
+
+    expander_intermediate_pressure_2:
+      min: 0.9*$working_fluid.liquid_at_ambient_temperature.p
+      max: 0.8*$working_fluid.critical_point.p
+      value: 0.031242*$working_fluid.critical_point.p
+
+    expander_intermediate_pressure_3:
+      min: 0.9*$working_fluid.liquid_at_ambient_temperature.p
+      max: 0.8*$working_fluid.critical_point.p
+      value: 0.017986*$working_fluid.critical_point.p
+
+
+  # ============================================================================
+  # CONSTRAINTS
+  # ============================================================================
+  constraints:
+    - variable: $components.heater.temperature_difference
+      type: ">"
+      value: 5
+      normalize: True
+
+    - variable: $components.cooler.temperature_difference
+      type: ">"
+      value: 5
+      normalize: True
+
+    - variable: $components.compressor.state_in.subcooling
+      type: ">"
+      value: 1.0
+      normalize: True
+
+    - variable: $components.expander.state_in.superheating
+      type: ">"
+      value: 5
+      normalize: True
+
+    - variable: $components.expander.mass_flow / $variables.expander_mass_flow_rate
+      type: "="
+      value: 1.0
+      normalize: True
+
+    # ── Intermediate pressure ordering constraints ──
+    - variable: $components.expander.state_in.p / $variables.expander_intermediate_pressure_1
+      type: ">"
+      value: 1.0
+      normalize: True
+
+    - variable: $variables.expander_intermediate_pressure_1 / $variables.expander_intermediate_pressure_2
+      type: ">"
+      value: 1.0
+      normalize: True
+
+    - variable: $variables.expander_intermediate_pressure_2 / $variables.expander_intermediate_pressure_3
+      type: ">"
+      value: 1.0
+      normalize: True
+
+    - variable: $variables.expander_intermediate_pressure_3 / $components.expander.state_out.p
+      type: ">"
+      value: 1.0
+      normalize: True
+
+    # ── Per-stage Ns constraints ──
+    - variable: $components.expander.data_out.stage_Ns
+      type: ">"
+      value: 0.045
+      normalize: True
+
+    - variable: $components.expander.data_out.stage_Ns
+      type: "<"
+      value: 0.195
+      normalize: True
+
+    # ── Per-stage Vr constraints ──
+    - variable: $components.expander.data_out.stage_Vr
+      type: "<"
+      value: 5.0
+      normalize: True
+
+    - variable: $components.expander.data_out.stage_Vr
+      type: ">"
+      value: 1.2
+      normalize: True
+
+
+  # ============================================================================
+  # OBJECTIVE FUNCTION
+  # ============================================================================
+  objective_function:
+    variable: $energy_analysis.system_efficiency
+    type: maximize

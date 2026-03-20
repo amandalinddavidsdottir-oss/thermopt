@@ -9,7 +9,6 @@ from datetime import datetime
 import numpy as np
 
 
-
 def convert_numpy_to_python(data, precision=10):
     """
     Recursively converts numpy arrays, scalars, and other numpy types to their Python counterparts
@@ -31,7 +30,7 @@ def convert_numpy_to_python(data, precision=10):
 
     elif isinstance(data, (list, tuple)):
         return [convert_numpy_to_python(item, precision) for item in data]
-    
+
     elif isinstance(data, np.ndarray):
         # If the numpy array has more than one element, it is iterable.
         if data.ndim > 0:
@@ -39,7 +38,7 @@ def convert_numpy_to_python(data, precision=10):
         else:
             # This handles the case of a numpy array with a single scalar value.
             return convert_numpy_to_python(data.item(), precision)
-        
+
     elif isinstance(data, np.generic):
         scalar = data.item()
         if np.issubdtype(type(data), np.floating):
@@ -443,10 +442,10 @@ class DictionaryValidationError(Exception):
         if self.key is not None and self.value is not None:
             return f"{self.message} Key: '{self.key}', Value: {self.value}"
         return self.message
-    
 
 
 from pathlib import Path
+
 
 def save_to_pickle(obj, filepath, timestamp=True):
     """
@@ -473,7 +472,7 @@ def save_to_pickle(obj, filepath, timestamp=True):
         stem = f"{stem}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     full_path = filepath.with_name(f"{stem}{suffix}")
 
-    with open(full_path, 'wb') as file:
+    with open(full_path, "wb") as file:
         pickle.dump(obj, file)
 
     print(f"Object successfully saved to {full_path}")
@@ -495,14 +494,16 @@ def load_from_pickle(filepath):
         The Python object stored in the pickle file.
     """
     filepath = Path(filepath)
-    with open(filepath, 'rb') as file:
+    with open(filepath, "rb") as file:
         obj = pickle.load(file)
 
     print(f"Object successfully loaded from {filepath}")
     return obj
 
 
-def dump_object_structure(obj, log_file, max_depth=5, _seen=None, _path="root", _depth=0):
+def dump_object_structure(
+    obj, log_file, max_depth=5, _seen=None, _path="root", _depth=0
+):
     """
     Recursively print the structure, types, and values of an object into a log file.
 
@@ -546,14 +547,20 @@ def dump_object_structure(obj, log_file, max_depth=5, _seen=None, _path="root", 
     if isinstance(obj, dict):
         for k, v in obj.items():
             key_str = repr(k)
-            dump_object_structure(v, log_file, max_depth, _seen, f"{_path}[{key_str}]", _depth + 1)
+            dump_object_structure(
+                v, log_file, max_depth, _seen, f"{_path}[{key_str}]", _depth + 1
+            )
 
     # Recurse into sequences
     elif isinstance(obj, (list, tuple, set)):
         for i, item in enumerate(obj):
-            dump_object_structure(item, log_file, max_depth, _seen, f"{_path}[{i}]", _depth + 1)
+            dump_object_structure(
+                item, log_file, max_depth, _seen, f"{_path}[{i}]", _depth + 1
+            )
 
     # Recurse into objects with attributes
     elif hasattr(obj, "__dict__"):
         for attr, val in vars(obj).items():
-            dump_object_structure(val, log_file, max_depth, _seen, f"{_path}.{attr}", _depth + 1)
+            dump_object_structure(
+                val, log_file, max_depth, _seen, f"{_path}.{attr}", _depth + 1
+            )

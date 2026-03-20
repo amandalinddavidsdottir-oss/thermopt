@@ -174,7 +174,9 @@ def print_rc_parameters(filename=None):
                 file.write(f"{key}: {value}\n")
 
 
-def savefig_in_formats(fig, path_without_extension, formats=[".png", ".svg", ".eps"], dpi=500):
+def savefig_in_formats(
+    fig, path_without_extension, formats=[".png", ".svg", ".eps"], dpi=500
+):
     """
     Save a given Matplotlib figure in multiple file formats.
 

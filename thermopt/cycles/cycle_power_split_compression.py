@@ -3,7 +3,12 @@ import jaxprop as cpx
 
 from .. import utilities
 
-from ..components import compression_process, expansion_process, heat_exchanger, compute_component_energy_flows
+from ..components import (
+    compression_process,
+    expansion_process,
+    heat_exchanger,
+    compute_component_energy_flows,
+)
 
 COLORS_MATLAB = utilities.COLORS_MATLAB
 
@@ -339,8 +344,9 @@ def evaluate_cycle(
     # Evaluate objective function and constraints
     output = {"components": components, "energy_analysis": energy_analysis}
     f = utilities.evaluate_objective_function(output, objective_function)
-    c_eq, c_ineq, constraint_report = utilities.evaluate_constraints(output, constraints)
-
+    c_eq, c_ineq, constraint_report = utilities.evaluate_constraints(
+        output, constraints
+    )
 
     # Set colors for plotting
     orange = COLORS_MATLAB[1]
@@ -374,5 +380,5 @@ def evaluate_cycle(
         "inequality_constraints": c_ineq,
         "constraints_report": constraint_report,
     }
-    
+
     return output

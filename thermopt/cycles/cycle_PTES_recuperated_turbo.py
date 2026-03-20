@@ -14,7 +14,7 @@ def evaluate_cycle(
     constraints,
     objective_function,
 ):
-    
+
     # --------------------------------------------------------------------- #
     # ---------------------- Charge cycle definition ---------------------- #
     # --------------------------------------------------------------------- #
@@ -40,13 +40,17 @@ def evaluate_cycle(
     # Extract pressure drops and give short names
     cold_storage_pressure = parameters["cold_storage"].pop("pressure")
     hot_storage_pressure = parameters["hot_storage"].pop("pressure")
-    dp_heater_h = parameters["heater_charge"].pop("pressure_drop_hot_side")  # Unused now that there are no pumps
+    dp_heater_h = parameters["heater_charge"].pop(
+        "pressure_drop_hot_side"
+    )  # Unused now that there are no pumps
     dp_heater_c = parameters["heater_charge"].pop("pressure_drop_cold_side")
     dp_cooler_h = parameters["cooler_charge"].pop("pressure_drop_hot_side")
-    dp_cooler_c = parameters["cooler_charge"].pop("pressure_drop_cold_side")  # Unused now that there are no pumps
+    dp_cooler_c = parameters["cooler_charge"].pop(
+        "pressure_drop_cold_side"
+    )  # Unused now that there are no pumps
     dp_recup_h = parameters["recuperator_charge"].pop("pressure_drop_hot_side")
     dp_recup_c = parameters["recuperator_charge"].pop("pressure_drop_cold_side")
-   
+
     # Extract design variables from dictionary (make sure all are used)
     cold_storage_upper_temperature = variables.pop("cold_storage_upper_temperature")
     cold_storage_lower_temperature = variables.pop("cold_storage_lower_temperature")
@@ -56,25 +60,37 @@ def evaluate_cycle(
     expander_inlet_h = variables.pop("expander_inlet_enthalpy_charge")
     compressor_inlet_p = variables.pop("compressor_inlet_pressure_charge")
     compressor_inlet_h = variables.pop("compressor_inlet_enthalpy_charge")
-    recuperator_inlet_enthalpy_hot_charge = variables.pop("recuperator_inlet_enthalpy_hot_charge")
-    
+    recuperator_inlet_enthalpy_hot_charge = variables.pop(
+        "recuperator_inlet_enthalpy_hot_charge"
+    )
+
     # Extract variables for non-dimensional turbomachinery models
     mass_flow_rate_charge = variables.pop("mass_flow_rate_charge")
     mass_flow_rate_discharge = variables.pop("mass_flow_rate_discharge")
 
     expander_charge_data = parameters["expander_charge"].pop("data_in")
-    expander_charge_data["specific_speed"] = variables.pop("expander_specific_speed_charge")
+    expander_charge_data["specific_speed"] = variables.pop(
+        "expander_specific_speed_charge"
+    )
 
     expander_discharge_data = parameters["expander_discharge"].pop("data_in")
-    expander_discharge_data["specific_speed"] = variables.pop("expander_specific_speed_discharge")
+    expander_discharge_data["specific_speed"] = variables.pop(
+        "expander_specific_speed_discharge"
+    )
 
     compressor_charge_data = parameters["compressor_charge"].pop("data_in")
     compressor_charge_data["backsweep"] = variables.pop("compressor_backsweep_charge")
-    compressor_charge_data["flow_coefficient"] = variables.pop("compressor_flow_coefficient_charge")
+    compressor_charge_data["flow_coefficient"] = variables.pop(
+        "compressor_flow_coefficient_charge"
+    )
 
     compressor_discharge_data = parameters["compressor_discharge"].pop("data_in")
-    compressor_discharge_data["backsweep"] = variables.pop("compressor_backsweep_discharge")
-    compressor_discharge_data["flow_coefficient"] = variables.pop("compressor_flow_coefficient_discharge")
+    compressor_discharge_data["backsweep"] = variables.pop(
+        "compressor_backsweep_discharge"
+    )
+    compressor_discharge_data["flow_coefficient"] = variables.pop(
+        "compressor_flow_coefficient_discharge"
+    )
 
     # Evaluate compressor
     dp = (1.0 - dp_cooler_h) * (1.0 - dp_recup_h)
@@ -189,11 +205,17 @@ def evaluate_cycle(
 
     # Compute mass flow rates
     W_charge = parameters.pop("charging_power")
-    m_total_charge = W_charge / (compressor_charge["specific_work"] - expander_charge["specific_work"]) 
-    m_sink_charge = m_total_charge*(cooler_charge["q_hot_side"])/(cooler_charge["q_cold_side"])
-    m_source_charge = m_total_charge*(heater_charge["q_cold_side"])/(heater_charge["q_hot_side"])
+    m_total_charge = W_charge / (
+        compressor_charge["specific_work"] - expander_charge["specific_work"]
+    )
+    m_sink_charge = (
+        m_total_charge * (cooler_charge["q_hot_side"]) / (cooler_charge["q_cold_side"])
+    )
+    m_source_charge = (
+        m_total_charge * (heater_charge["q_cold_side"]) / (heater_charge["q_hot_side"])
+    )
     m_error_charge = (m_total_charge - mass_flow_rate_charge) / m_total_charge
-    
+
     # Add the mass flow to the components
     heater_charge["hot_side"]["mass_flow"] = m_source_charge
     heater_charge["cold_side"]["mass_flow"] = m_total_charge
@@ -204,26 +226,33 @@ def evaluate_cycle(
     expander_charge["mass_flow"] = m_total_charge
     compressor_charge["mass_flow"] = m_total_charge
 
-
     # --------------------------------------------------------------------- #
     # -------------------- Discharge cycle definition --------------------- #
     # --------------------------------------------------------------------- #
 
     # Extract pressure drops and give short names
-    dp_heater_h = parameters["heater_discharge"].pop("pressure_drop_hot_side")  # Unused now that there are no pumps
+    dp_heater_h = parameters["heater_discharge"].pop(
+        "pressure_drop_hot_side"
+    )  # Unused now that there are no pumps
     dp_heater_c = parameters["heater_discharge"].pop("pressure_drop_cold_side")
     dp_cooler_h = parameters["cooler_discharge"].pop("pressure_drop_hot_side")
-    dp_cooler_c = parameters["cooler_discharge"].pop("pressure_drop_cold_side")  # Unused now that there are no pumps
+    dp_cooler_c = parameters["cooler_discharge"].pop(
+        "pressure_drop_cold_side"
+    )  # Unused now that there are no pumps
     dp_recup_h = parameters["recuperator_discharge"].pop("pressure_drop_hot_side")
     dp_recup_c = parameters["recuperator_discharge"].pop("pressure_drop_cold_side")
- 
+
     # Extract design variables from dictionary (make sure all are used)
-    cold_storage_upper_temperature_discharge = variables.pop("cold_storage_upper_temperature_discharge")
+    cold_storage_upper_temperature_discharge = variables.pop(
+        "cold_storage_upper_temperature_discharge"
+    )
     expander_inlet_p = variables.pop("expander_inlet_pressure_discharge")
     expander_inlet_h = variables.pop("expander_inlet_enthalpy_discharge")
     compressor_inlet_p = variables.pop("compressor_inlet_pressure_discharge")
     compressor_inlet_h = variables.pop("compressor_inlet_enthalpy_discharge")
-    recuperator_outlet_enthalpy_hot_discharge = variables.pop("recuperator_outlet_enthalpy_hot_discharge")
+    recuperator_outlet_enthalpy_hot_discharge = variables.pop(
+        "recuperator_outlet_enthalpy_hot_discharge"
+    )
 
     # Evaluate  compressor
     dp = (1.0 - dp_heater_c) * (1.0 - dp_recup_c)
@@ -338,9 +367,19 @@ def evaluate_cycle(
 
     # Compute mass flow rates
     m_source_discharge = m_sink_charge
-    m_total_discharge = m_source_discharge*heater_discharge["q_hot_side"]/heater_discharge["q_cold_side"] #an addition
-    m_sink_discharge = m_total_discharge*(cooler_discharge["q_hot_side"])/(cooler_discharge["q_cold_side"]) #an addition
-    m_error_discharge = (m_total_discharge - mass_flow_rate_discharge) / m_total_discharge
+    m_total_discharge = (
+        m_source_discharge
+        * heater_discharge["q_hot_side"]
+        / heater_discharge["q_cold_side"]
+    )  # an addition
+    m_sink_discharge = (
+        m_total_discharge
+        * (cooler_discharge["q_hot_side"])
+        / (cooler_discharge["q_cold_side"])
+    )  # an addition
+    m_error_discharge = (
+        m_total_discharge - mass_flow_rate_discharge
+    ) / m_total_discharge
     m_mismatch = (m_sink_discharge - m_source_charge) / m_sink_discharge
 
     # Add the mass flow to the components
@@ -352,7 +391,6 @@ def evaluate_cycle(
     cooler_discharge["cold_side"]["mass_flow"] = m_sink_discharge
     expander_discharge["mass_flow"] = m_total_discharge
     compressor_discharge["mass_flow"] = m_total_discharge
-
 
     # --------------------------------------------------------------------- #
     # ------------ Energy analysis and postprocessing --------------------- #
@@ -405,8 +443,10 @@ def evaluate_cycle(
     W_net_discharge = W_out_discharge - W_in_discharge
     cycle_efficiency_discharge = (W_out_discharge - W_in_discharge) / Q_in_discharge
     backwork_ratio_discharge = W_in_discharge / W_out_discharge
-    energy_balance_discharge = (Q_in_discharge + W_in_discharge) - (W_out_discharge + Q_out_discharge)  # Add additional rejected heat in sink
-    roundtrip_efficiency = COP_heat_pump*cycle_efficiency_discharge
+    energy_balance_discharge = (Q_in_discharge + W_in_discharge) - (
+        W_out_discharge + Q_out_discharge
+    )  # Add additional rejected heat in sink
+    roundtrip_efficiency = COP_heat_pump * cycle_efficiency_discharge
     energy_analysis = {
         "mass_flow_heating_fluid_charge": m_source_charge,
         "mass_flow_working_fluid_charge": m_total_charge,
@@ -444,12 +484,14 @@ def evaluate_cycle(
         "hot_storage_pressure": hot_storage_pressure,
         "m_error_charge": m_error_charge,
         "m_error_discharge": m_error_discharge,
-    } 
+    }
 
     # Evaluate objective function and constraints
     output = {"components": components, "energy_analysis": energy_analysis}
     f = utilities.evaluate_objective_function(output, objective_function)
-    c_eq, c_ineq, constraint_report = utilities.evaluate_constraints(output, constraints)
+    c_eq, c_ineq, constraint_report = utilities.evaluate_constraints(
+        output, constraints
+    )
 
     # Set colors and linestyles for plotting
     orange = COLORS_MATLAB[1]
@@ -463,14 +505,46 @@ def evaluate_cycle(
     cooler_charge["cold_side"]["plot_params"] = {"color": red, "linestyle": "-"}
     expander_charge["plot_params"] = {"color": orange, "linestyle": "-"}
     compressor_charge["plot_params"] = {"color": orange, "linestyle": "-"}
-    heater_discharge["hot_side"]["plot_params"] = {"color": red, "linestyle": "--", "marker": "s"}
-    heater_discharge["cold_side"]["plot_params"] = {"color": orange, "linestyle": "--", "marker": "s"}
-    recuperator_discharge["hot_side"]["plot_params"] = {"color": orange, "linestyle": "--", "marker": "s"}
-    recuperator_discharge["cold_side"]["plot_params"] = {"color": orange, "linestyle": "--", "marker": "s"}
-    cooler_discharge["hot_side"]["plot_params"] = {"color": orange, "linestyle": "--", "marker": "s"}
-    cooler_discharge["cold_side"]["plot_params"] = {"color": blue, "linestyle": "--", "marker": "s"}
-    expander_discharge["plot_params"] = {"color": orange, "linestyle": "--", "marker": "s"}
-    compressor_discharge["plot_params"] = {"color": orange, "linestyle": "--", "marker": "s"}
+    heater_discharge["hot_side"]["plot_params"] = {
+        "color": red,
+        "linestyle": "--",
+        "marker": "s",
+    }
+    heater_discharge["cold_side"]["plot_params"] = {
+        "color": orange,
+        "linestyle": "--",
+        "marker": "s",
+    }
+    recuperator_discharge["hot_side"]["plot_params"] = {
+        "color": orange,
+        "linestyle": "--",
+        "marker": "s",
+    }
+    recuperator_discharge["cold_side"]["plot_params"] = {
+        "color": orange,
+        "linestyle": "--",
+        "marker": "s",
+    }
+    cooler_discharge["hot_side"]["plot_params"] = {
+        "color": orange,
+        "linestyle": "--",
+        "marker": "s",
+    }
+    cooler_discharge["cold_side"]["plot_params"] = {
+        "color": blue,
+        "linestyle": "--",
+        "marker": "s",
+    }
+    expander_discharge["plot_params"] = {
+        "color": orange,
+        "linestyle": "--",
+        "marker": "s",
+    }
+    compressor_discharge["plot_params"] = {
+        "color": orange,
+        "linestyle": "--",
+        "marker": "s",
+    }
 
     # Check if any fixed parameter or design variable was not used
     utilities.check_for_unused_keys(parameters, "parameters", raise_error=True)
@@ -482,9 +556,6 @@ def evaluate_cycle(
     # print(components["compressor_charge"]["data_out"]["isentropic_efficiency"])
     # print(components["compressor_discharge"]["data_out"]["isentropic_efficiency"])
     # print()
-
-
-
 
     # Cycle performance summary
     output = {
@@ -500,5 +571,3 @@ def evaluate_cycle(
     }
 
     return output
-
-

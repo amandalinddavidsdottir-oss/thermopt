@@ -9,13 +9,14 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
-#---- importing post processing files:
+# ---- importing post processing files:
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "shared_utilities"))
 from exergy_analysis import perform_exergy_analysis, plot_heat_source_utilization
 from plot_TQ_diagram import plot_TQ_diagram
 from validation_checks import run_validation_checks
 from plot_combined_TQ import plot_combined_TQ
-#-----
+
+# -----
 
 warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
 
@@ -25,19 +26,23 @@ warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
 # ══════════════════════════════════════════════════════════════════════
 MODE = "optimize"  # "optimize" | "sweep" | "parametric"
 
-#CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC.yaml")
-#CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC - 120reinjection.yaml")
-#With mass flow:
-#CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC_120reinjection_mass_flow.yaml")
-#CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC_mass_flow.yaml")
-#WITH Astolfi stacking correlations:
-CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC_mass_flow_macchi_astolfi.yaml")
+# CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC.yaml")
+# CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC - 120reinjection.yaml")
+# With mass flow:
+# CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC_120reinjection_mass_flow.yaml")
+# CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperated_dualORC_mass_flow.yaml")
+# WITH Astolfi stacking correlations:
+CONFIG_FILE = Path(__file__).with_name(
+    "case_Toluene_recuperated_dualORC_mass_flow_macchi_astolfi.yaml"
+)
 
 SWEEP_OUTPUT_DIR = "results/fluid_sweep_RECUPERATED_DUAL_ORC"
 
 # ── Parametric study settings ──
 PARAMETRIC_CONFIGS = [
-    Path(__file__).with_name("case_Toluene_recuperated_dualORC_mass_flow_macchi_astolfi.yaml"),
+    Path(__file__).with_name(
+        "case_Toluene_recuperated_dualORC_mass_flow_macchi_astolfi.yaml"
+    ),
 ]
 PARAMETRIC_HP_STAGES = [2, 3]
 PARAMETRIC_LP_STAGES = [2, 3, 5, 7]
@@ -68,12 +73,18 @@ def run_optimize(config_file):
     print("\n" + "=" * 76)
     print("  MASS FLOW RATES")
     print("=" * 76)
-    print(f"  Well (heating fluid)               :  {ea['mass_flow_heating_fluid']:.2f} kg/s")
-    print(f"  Working fluid (total)              :  {ea['mass_flow_working_fluid']:.2f} kg/s")
+    print(
+        f"  Well (heating fluid)               :  {ea['mass_flow_heating_fluid']:.2f} kg/s"
+    )
+    print(
+        f"  Working fluid (total)              :  {ea['mass_flow_working_fluid']:.2f} kg/s"
+    )
     print(f"    HP branch                        :  {ea['mass_flow_hp']:.2f} kg/s")
     print(f"    LP branch                        :  {ea['mass_flow_lp']:.2f} kg/s")
     print(f"  Split fraction (x)                 :  {ea['split_fraction']:.4f}")
-    print(f"  Cooling fluid                      :  {ea['mass_flow_cooling_fluid']:.2f} kg/s")
+    print(
+        f"  Cooling fluid                      :  {ea['mass_flow_cooling_fluid']:.2f} kg/s"
+    )
     print("=" * 76 + "\n")
 
     # ──────────────────────── POST-PROCESSING ─────────────────────────
@@ -115,44 +126,53 @@ def run_optimize(config_file):
     #   9  = LP expander outlet
     #   9' = Recuperator hot-side outlet (cooler inlet)
     state_points = {
-        "1":  components["lp_pump"]["state_in"],
-        "2":  components["lp_pump"]["state_out"],
+        "1": components["lp_pump"]["state_in"],
+        "2": components["lp_pump"]["state_out"],
         "2'": components["recuperator"]["cold_side"]["state_out"],
-        "3":  components["hp_pump"]["state_in"],
+        "3": components["hp_pump"]["state_in"],
         "3'": components["hp_pump"]["state_out"],
-        "4":  components["lp_evaporator"]["cold_side"]["state_out"],
-        "6":  components["hp_expander"]["state_in"],
-        "7":  components["hp_expander"]["state_out"],
-        "8":  components["lp_expander"]["state_in"],
-        "9":  components["lp_expander"]["state_out"],
+        "4": components["lp_evaporator"]["cold_side"]["state_out"],
+        "6": components["hp_expander"]["state_in"],
+        "7": components["hp_expander"]["state_out"],
+        "8": components["lp_expander"]["state_in"],
+        "9": components["lp_expander"]["state_out"],
         "9'": components["recuperator"]["hot_side"]["state_out"],
     }
     offsets = {
-        "1":  (  12.4,   -7.6),
-        "2":  (  -6.8,    9.7),
-        "2'": ( -37.0,   -9.3),
-        "3":  (  -7.2,    6.3),
-        "3'": (   1.1,   15.1),
-        "4":  ( -22.6,   -6.6),
-        "6":  (   5.1,   -0.6),
-        "7":  (   5.6,    2.6),
-        "8":  (   5.7,   -9.4),
-        "9":  (   5.0,   -4.6),
-        "9'": (   5.0,   -4.0),
+        "1": (12.4, -7.6),
+        "2": (-6.8, 9.7),
+        "2'": (-37.0, -9.3),
+        "3": (-7.2, 6.3),
+        "3'": (1.1, 15.1),
+        "4": (-22.6, -6.6),
+        "6": (5.1, -0.6),
+        "7": (5.6, 2.6),
+        "8": (5.7, -9.4),
+        "9": (5.0, -4.6),
+        "9'": (5.0, -4.0),
     }
     fig_ts = cycle.problem.figure
     ax_ts = fig_ts.axes[0]
     for label, st in state_points.items():
         dx, dy = offsets[label]
         ax_ts.annotate(
-            label, (st.s, st.T),
-            textcoords="offset points", xytext=(dx, dy),
-            fontsize=9, fontweight="bold", zorder=20,
-            bbox=dict(boxstyle="round,pad=0.2", facecolor="white",
-                      edgecolor="none", alpha=0.85),
+            label,
+            (st.s, st.T),
+            textcoords="offset points",
+            xytext=(dx, dy),
+            fontsize=9,
+            fontweight="bold",
+            zorder=20,
+            bbox=dict(
+                boxstyle="round,pad=0.2",
+                facecolor="white",
+                edgecolor="none",
+                alpha=0.85,
+            ),
         )
-    fig_ts.savefig(os.path.join(graph_dir, "Ts_labeled.png"),
-                   dpi=200, bbox_inches="tight")
+    fig_ts.savefig(
+        os.path.join(graph_dir, "Ts_labeled.png"), dpi=200, bbox_inches="tight"
+    )
     plt.close(fig_ts)
 
     # ── T-Q diagrams of all heat exchangers (including recuperator) ──
@@ -172,8 +192,12 @@ def run_optimize(config_file):
     print("=" * 60)
     recup = components["recuperator"]
     print(f"  Heat transferred   : {energy['recuperator_heat_flow']/1e6:.2f} MW")
-    print(f"  Hot side  : {recup['hot_side']['state_in'].T:.1f} K → {recup['hot_side']['state_out'].T:.1f} K")
-    print(f"  Cold side : {recup['cold_side']['state_in'].T:.1f} K → {recup['cold_side']['state_out'].T:.1f} K")
+    print(
+        f"  Hot side  : {recup['hot_side']['state_in'].T:.1f} K → {recup['hot_side']['state_out'].T:.1f} K"
+    )
+    print(
+        f"  Cold side : {recup['cold_side']['state_in'].T:.1f} K → {recup['cold_side']['state_out'].T:.1f} K"
+    )
     print(f"  Min ΔT    : {float(min(recup['temperature_difference'])):.2f} K")
     print("=" * 60)
 
@@ -195,7 +219,11 @@ def run_optimize(config_file):
 def run_sweep(config_file, output_dir):
     """Run fluid sweep across all candidates using config as template."""
 
-    from fluid_sweep_BASIC_ORC import get_candidate_fluids, run_fluid_sweep, plot_results
+    from fluid_sweep_BASIC_ORC import (
+        get_candidate_fluids,
+        run_fluid_sweep,
+        plot_results,
+    )
 
     candidates = get_candidate_fluids(config_file)
     df = run_fluid_sweep(config_file, candidates, output_dir=output_dir)
@@ -206,6 +234,7 @@ def run_sweep(config_file, output_dir):
 #  MODE 3: PARAMETRIC STUDY (HP_stages × LP_stages)
 # ══════════════════════════════════════════════════════════════════════
 
+
 def _modify_yaml_dual(yaml_text, hp_stages, lp_stages, hp_RPM=None, lp_RPM=None):
     """
     Replace n_stages and RPM for HP and LP expanders independently.
@@ -213,16 +242,16 @@ def _modify_yaml_dual(yaml_text, hp_stages, lp_stages, hp_RPM=None, lp_RPM=None)
     """
     # Replace hp_expander n_stages
     yaml_text = re.sub(
-        r'(hp_expander:.*?n_stages:\s*)\d+',
-        rf'\g<1>{hp_stages}',
+        r"(hp_expander:.*?n_stages:\s*)\d+",
+        rf"\g<1>{hp_stages}",
         yaml_text,
         count=1,
         flags=re.DOTALL,
     )
     # Replace lp_expander n_stages
     yaml_text = re.sub(
-        r'(lp_expander:.*?n_stages:\s*)\d+',
-        rf'\g<1>{lp_stages}',
+        r"(lp_expander:.*?n_stages:\s*)\d+",
+        rf"\g<1>{lp_stages}",
         yaml_text,
         count=1,
         flags=re.DOTALL,
@@ -230,8 +259,8 @@ def _modify_yaml_dual(yaml_text, hp_stages, lp_stages, hp_RPM=None, lp_RPM=None)
     # Replace hp_expander RPM
     if hp_RPM is not None:
         yaml_text = re.sub(
-            r'(hp_expander:.*?RPM:\s*)\d+',
-            rf'\g<1>{hp_RPM}',
+            r"(hp_expander:.*?RPM:\s*)\d+",
+            rf"\g<1>{hp_RPM}",
             yaml_text,
             count=1,
             flags=re.DOTALL,
@@ -239,8 +268,8 @@ def _modify_yaml_dual(yaml_text, hp_stages, lp_stages, hp_RPM=None, lp_RPM=None)
     # Replace lp_expander RPM
     if lp_RPM is not None:
         yaml_text = re.sub(
-            r'(lp_expander:.*?RPM:\s*)\d+',
-            rf'\g<1>{lp_RPM}',
+            r"(lp_expander:.*?RPM:\s*)\d+",
+            rf"\g<1>{lp_RPM}",
             yaml_text,
             count=1,
             flags=re.DOTALL,
@@ -270,8 +299,9 @@ def _extract_results_dual(cycle, config_file, hp_stages, lp_stages, hp_RPM, lp_R
     result["eta_cycle"] = energy.get("cycle_efficiency", None)
     result["W_net_kW"] = energy.get("net_system_power", 0) / 1e3
     result["W_gross_kW"] = energy.get("gross_power", 0) / 1e3
-    result["Q_in_kW"] = energy.get("total_heat_input",
-                                    energy.get("heater_heat_flow", 0)) / 1e3
+    result["Q_in_kW"] = (
+        energy.get("total_heat_input", energy.get("heater_heat_flow", 0)) / 1e3
+    )
     result["m_dot_wf_kg_s"] = energy.get("mass_flow_working_fluid", None)
     result["m_dot_hp_kg_s"] = energy.get("mass_flow_hp", None)
     result["m_dot_lp_kg_s"] = energy.get("mass_flow_lp", None)
@@ -289,7 +319,9 @@ def _extract_results_dual(cycle, config_file, hp_stages, lp_stages, hp_RPM, lp_R
         result[f"{prefix}_Dh_is_kJ_kg"] = exp.get("isentropic_work", 0) / 1e3
         result[f"{prefix}_p_in_bar"] = exp["state_in"].p / 1e5
         result[f"{prefix}_p_out_bar"] = exp["state_out"].p / 1e5
-        result[f"{prefix}_W_kW"] = exp.get("mass_flow", 0) * exp.get("specific_work", 0) / 1e3
+        result[f"{prefix}_W_kW"] = (
+            exp.get("mass_flow", 0) * exp.get("specific_work", 0) / 1e3
+        )
 
         # Per-stage diagnostics (astolfi-stacking)
         stage_data = data_out.get("stage_data", [])
@@ -314,7 +346,10 @@ def _run_single_dual(config_file, hp_stages, lp_stages, hp_RPM, lp_RPM):
     yaml_text = _modify_yaml_dual(yaml_text, hp_stages, lp_stages, hp_RPM, lp_RPM)
 
     config_dir = Path(config_file).parent
-    tmp_path = config_dir / f"_tmp_parametric_hp{hp_stages}_lp{lp_stages}_hprpm{hp_RPM}_lprpm{lp_RPM}.yaml"
+    tmp_path = (
+        config_dir
+        / f"_tmp_parametric_hp{hp_stages}_lp{lp_stages}_hprpm{hp_RPM}_lprpm{lp_RPM}.yaml"
+    )
 
     try:
         tmp_path.write_text(yaml_text)
@@ -345,7 +380,9 @@ def _run_single_dual(config_file, hp_stages, lp_stages, hp_RPM, lp_RPM):
                 "converged": False,
             }
 
-        return _extract_results_dual(cycle, config_file, hp_stages, lp_stages, hp_RPM, lp_RPM)
+        return _extract_results_dual(
+            cycle, config_file, hp_stages, lp_stages, hp_RPM, lp_RPM
+        )
 
     except Exception as e:
         print(f"    ✗ FAILED: {e}")
@@ -364,16 +401,22 @@ def _run_single_dual(config_file, hp_stages, lp_stages, hp_RPM, lp_RPM):
             tmp_path.unlink()
 
 
-def run_parametric(config_files, hp_stages_list, lp_stages_list,
-                   hp_rpms, lp_rpms, output_dir):
+def run_parametric(
+    config_files, hp_stages_list, lp_stages_list, hp_rpms, lp_rpms, output_dir
+):
     """Run the full HP_stages × LP_stages × HP_RPM × LP_RPM parametric study."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     warnings.filterwarnings("once", message="Astolfi-stacking: SP")
 
-    total_runs = (len(config_files) * len(hp_stages_list) * len(lp_stages_list)
-                  * len(hp_rpms) * len(lp_rpms))
+    total_runs = (
+        len(config_files)
+        * len(hp_stages_list)
+        * len(lp_stages_list)
+        * len(hp_rpms)
+        * len(lp_rpms)
+    )
     results = []
     run_count = 0
 
@@ -404,13 +447,17 @@ def run_parametric(config_files, hp_stages_list, lp_stages_list,
                 for hp_n in hp_stages_list:
                     for lp_n in lp_stages_list:
                         run_count += 1
-                        print(f"\n  [{run_count}/{total_runs}] "
-                              f"HP={hp_n}stg@{hp_rpm}, LP={lp_n}stg@{lp_rpm} "
-                              f"({shaft_label}) ... ",
-                              end="", flush=True)
+                        print(
+                            f"\n  [{run_count}/{total_runs}] "
+                            f"HP={hp_n}stg@{hp_rpm}, LP={lp_n}stg@{lp_rpm} "
+                            f"({shaft_label}) ... ",
+                            end="",
+                            flush=True,
+                        )
 
-                        result = _run_single_dual(config_file, hp_n, lp_n,
-                                                  hp_rpm, lp_rpm)
+                        result = _run_single_dual(
+                            config_file, hp_n, lp_n, hp_rpm, lp_rpm
+                        )
                         results.append(result)
 
                         if result.get("converged", False):
@@ -418,7 +465,9 @@ def run_parametric(config_files, hp_stages_list, lp_stages_list,
                             eta_pct = eta * 100 if eta else 0
                             W = result.get("W_net_kW", 0)
                             Q_rec = result.get("Q_recuperator_kW", 0)
-                            print(f"✓  η_sys = {eta_pct:.2f}%,  W_net = {W:.0f} kW,  Q_rec = {Q_rec:.0f} kW")
+                            print(
+                                f"✓  η_sys = {eta_pct:.2f}%,  W_net = {W:.0f} kW,  Q_rec = {Q_rec:.0f} kW"
+                            )
                         else:
                             print("✗  did not converge")
 
@@ -437,12 +486,27 @@ def run_parametric(config_files, hp_stages_list, lp_stages_list,
     print("  PARAMETRIC STUDY — RESULTS SUMMARY")
     print("=" * 76)
 
-    display_cols = ["config", "HP_n_stages", "LP_n_stages",
-                    "HP_RPM", "LP_RPM", "shared_shaft", "converged"]
-    for col in ["eta_system", "W_net_kW",
-                 "HP_eta_turbine", "HP_Ns_max", "HP_any_stage_zero",
-                 "LP_eta_turbine", "LP_Ns_max", "LP_any_stage_zero",
-                 "split_fraction", "Q_recuperator_kW"]:
+    display_cols = [
+        "config",
+        "HP_n_stages",
+        "LP_n_stages",
+        "HP_RPM",
+        "LP_RPM",
+        "shared_shaft",
+        "converged",
+    ]
+    for col in [
+        "eta_system",
+        "W_net_kW",
+        "HP_eta_turbine",
+        "HP_Ns_max",
+        "HP_any_stage_zero",
+        "LP_eta_turbine",
+        "LP_Ns_max",
+        "LP_any_stage_zero",
+        "split_fraction",
+        "Q_recuperator_kW",
+    ]:
         if col in df.columns:
             display_cols.append(col)
 

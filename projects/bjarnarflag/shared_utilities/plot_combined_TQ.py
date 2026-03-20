@@ -22,6 +22,7 @@ import matplotlib.pyplot as plt
 #  DATA EXTRACTION
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def _extract_hx(components, name):
     """
     Extract T and Q arrays for one heat exchanger.
@@ -93,9 +94,16 @@ def _build_segments(cycle):
 #  PLOTTING
 # ══════════════════════════════════════════════════════════════════════════════
 
-def plot_combined_TQ(cycle, overlay_cycle=None, overlay_label=None,
-                     savefig=True, filename=None, output_dir=None,
-                     figsize=(14, 7)):
+
+def plot_combined_TQ(
+    cycle,
+    overlay_cycle=None,
+    overlay_label=None,
+    savefig=True,
+    filename=None,
+    output_dir=None,
+    figsize=(14, 7),
+):
     """
     Plot combined T-Q diagram for all brine-side heat exchangers.
 
@@ -144,34 +152,59 @@ def plot_combined_TQ(cycle, overlay_cycle=None, overlay_label=None,
 
         # Background shading
         ax.fill_between(
-            seg["Q_cold_abs"], seg["T_cold"], seg["T_hot"],
-            color=color_bg, alpha=0.5, zorder=1,
+            seg["Q_cold_abs"],
+            seg["T_cold"],
+            seg["T_hot"],
+            color=color_bg,
+            alpha=0.5,
+            zorder=1,
         )
 
         # Hot-side curve (brine)
-        ax.plot(seg["Q_hot_abs"], seg["T_hot"],
-                color="#c0392b", linewidth=2.0, zorder=3)
+        ax.plot(
+            seg["Q_hot_abs"], seg["T_hot"], color="#c0392b", linewidth=2.0, zorder=3
+        )
 
         # Cold-side curve (working fluid)
-        ax.plot(seg["Q_cold_abs"], seg["T_cold"],
-                color="#2980b9", linewidth=2.0, zorder=3)
+        ax.plot(
+            seg["Q_cold_abs"], seg["T_cold"], color="#2980b9", linewidth=2.0, zorder=3
+        )
 
         # Section boundary (vertical dashed line)
         if i > 0:
-            ax.axvline(seg["Q_start"], color="gray", linestyle=":",
-                       linewidth=0.8, alpha=0.7, zorder=2)
+            ax.axvline(
+                seg["Q_start"],
+                color="gray",
+                linestyle=":",
+                linewidth=0.8,
+                alpha=0.7,
+                zorder=2,
+            )
 
     # ── Plot overlay cycle (dashed lines, no fill) ──
     if overlay_segments is not None:
         label_done = False
         for seg in overlay_segments:
             lbl = overlay_label or "Overlay" if not label_done else None
-            ax.plot(seg["Q_hot_abs"], seg["T_hot"],
-                    color="#c0392b", linewidth=1.5, linestyle="--",
-                    alpha=0.7, zorder=2, label=lbl)
-            ax.plot(seg["Q_cold_abs"], seg["T_cold"],
-                    color="#2980b9", linewidth=1.5, linestyle="--",
-                    alpha=0.7, zorder=2)
+            ax.plot(
+                seg["Q_hot_abs"],
+                seg["T_hot"],
+                color="#c0392b",
+                linewidth=1.5,
+                linestyle="--",
+                alpha=0.7,
+                zorder=2,
+                label=lbl,
+            )
+            ax.plot(
+                seg["Q_cold_abs"],
+                seg["T_cold"],
+                color="#2980b9",
+                linewidth=1.5,
+                linestyle="--",
+                alpha=0.7,
+                zorder=2,
+            )
             label_done = True
 
     # ── Pinch-point markers ──
@@ -187,10 +220,12 @@ def plot_combined_TQ(cycle, overlay_cycle=None, overlay_label=None,
                 f"ΔT = {pinch_dT:.1f} °C",
                 xy=(pinch_Q, pinch_T),
                 xytext=(pinch_Q, pinch_T - 8),
-                fontsize=8, ha="center",
+                fontsize=8,
+                ha="center",
                 arrowprops=dict(arrowstyle="->", color="black", lw=0.8),
-                bbox=dict(boxstyle="round,pad=0.2", fc="lightyellow",
-                          ec="gray", alpha=0.9),
+                bbox=dict(
+                    boxstyle="round,pad=0.2", fc="lightyellow", ec="gray", alpha=0.9
+                ),
                 zorder=5,
             )
 
@@ -198,17 +233,31 @@ def plot_combined_TQ(cycle, overlay_cycle=None, overlay_label=None,
     if segments:
         # Brine inlet (hot end of last segment)
         last = segments[-1]
-        ax.plot(last["Q_hot_abs"][-1], last["T_hot"][-1], "o",
-                color="#c0392b", markersize=7, markerfacecolor="white",
-                markeredgewidth=1.5, zorder=5)
+        ax.plot(
+            last["Q_hot_abs"][-1],
+            last["T_hot"][-1],
+            "o",
+            color="#c0392b",
+            markersize=7,
+            markerfacecolor="white",
+            markeredgewidth=1.5,
+            zorder=5,
+        )
         # Brine outlet (cold end of first segment)
         first = segments[0]
-        ax.plot(first["Q_hot_abs"][0], first["T_hot"][0], "o",
-                color="#c0392b", markersize=7, markerfacecolor="white",
-                markeredgewidth=1.5, zorder=5)
+        ax.plot(
+            first["Q_hot_abs"][0],
+            first["T_hot"][0],
+            "o",
+            color="#c0392b",
+            markersize=7,
+            markerfacecolor="white",
+            markeredgewidth=1.5,
+            zorder=5,
+        )
 
     # ── Axis labels and formatting ──
-    ax.set_xlabel("Cumulative heat duty, Q [kW]", fontsize=12)
+    ax.set_xlabel(r"Cumulative heat duty, $\dot{Q}$ [kW]", fontsize=12)
     ax.set_ylabel("Temperature [°C]", fontsize=12)
     ax.set_title("Combined T–Q Diagram", fontsize=14, fontweight="bold")
     ax.set_xlim(left=0)
@@ -221,24 +270,39 @@ def plot_combined_TQ(cycle, overlay_cycle=None, overlay_label=None,
     for seg in segments:
         Q_mid = (seg["Q_start"] + seg["Q_end"]) / 2
         display = _DISPLAY.get(seg["name"], seg["name"])
-        ax.text(Q_mid, label_y, display,
-                ha="center", va="top", fontsize=9, fontweight="bold",
-                color="#444444",
-                bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
-                          edgecolor="#cccccc", alpha=0.9),
-                zorder=6)
+        ax.text(
+            Q_mid,
+            label_y,
+            display,
+            ha="center",
+            va="top",
+            fontsize=9,
+            fontweight="bold",
+            color="#444444",
+            bbox=dict(
+                boxstyle="round,pad=0.3",
+                facecolor="white",
+                edgecolor="#cccccc",
+                alpha=0.9,
+            ),
+            zorder=6,
+        )
 
     # ── Legend ──
     handles = [
-        plt.Line2D([0], [0], color="#c0392b", linewidth=2,
-                   label="Heat source (brine)"),
-        plt.Line2D([0], [0], color="#2980b9", linewidth=2,
-                   label="Working fluid"),
+        plt.Line2D([0], [0], color="#c0392b", linewidth=2, label="Heat source (brine)"),
+        plt.Line2D([0], [0], color="#2980b9", linewidth=2, label="Working fluid"),
     ]
     if overlay_segments is not None:
         handles.append(
-            plt.Line2D([0], [0], color="gray", linewidth=1.5, linestyle="--",
-                       label=overlay_label or "Overlay")
+            plt.Line2D(
+                [0],
+                [0],
+                color="gray",
+                linewidth=1.5,
+                linestyle="--",
+                label=overlay_label or "Overlay",
+            )
         )
     ax.legend(handles=handles, loc="lower right", fontsize=9, framealpha=0.9)
 
@@ -257,8 +321,10 @@ def plot_combined_TQ(cycle, overlay_cycle=None, overlay_label=None,
     for seg in segments:
         display = _DISPLAY.get(seg["name"], seg["name"])
         dT = seg["T_hot"] - seg["T_cold"]
-        print(f"  {display:<20s}: Q = {seg['Q_total']:10.1f} kW"
-              f"   pinch ΔT = {float(np.min(dT)):5.1f} °C")
+        print(
+            f"  {display:<20s}: Q = {seg['Q_total']:10.1f} kW"
+            f"   pinch ΔT = {float(np.min(dT)):5.1f} °C"
+        )
     Q_total = sum(s["Q_total"] for s in segments)
     print(f"  {'Total':<20s}: Q = {Q_total:10.1f} kW")
     print("─" * 60)

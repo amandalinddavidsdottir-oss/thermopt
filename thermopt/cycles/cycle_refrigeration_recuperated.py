@@ -3,7 +3,12 @@ import jaxprop as cpx
 
 from .. import utilities
 
-from ..components import compression_process, expansion_process, heat_exchanger, compute_component_energy_flows
+from ..components import (
+    compression_process,
+    expansion_process,
+    heat_exchanger,
+    compute_component_energy_flows,
+)
 
 COLORS_MATLAB = utilities.COLORS_MATLAB
 
@@ -35,7 +40,7 @@ def evaluate_cycle(
 
     # Extract pressure drops and give short names
     p_source_out = parameters["heat_source"].pop("exit_pressure")
-    p_sink_out   = parameters["heat_sink"].pop("exit_pressure")
+    p_sink_out = parameters["heat_sink"].pop("exit_pressure")
     dp_heater_h = parameters["heater"].pop("pressure_drop_hot_side")
     dp_heater_c = parameters["heater"].pop("pressure_drop_cold_side")
     dp_cooler_h = parameters["cooler"].pop("pressure_drop_hot_side")
@@ -264,7 +269,9 @@ def evaluate_cycle(
     # output = {"components": components}
     output = {"components": components, "energy_analysis": energy_analysis}
     f = utilities.evaluate_objective_function(output, objective_function)
-    c_eq, c_ineq, constraint_report = utilities.evaluate_constraints(output, constraints)
+    c_eq, c_ineq, constraint_report = utilities.evaluate_constraints(
+        output, constraints
+    )
 
     # Set colors and linestyles for plotting
     orange = COLORS_MATLAB[1]

@@ -9,7 +9,7 @@ th.print_package_info()
 # Define configuration filename
 HERE = Path(__file__).resolve().parent
 config_files = [str(HERE / "case_Cyclohexane_ORC_prufa.yaml")]
-#config_files = ["./case_butane_ORC.yaml"]
+# config_files = ["./case_butane_ORC.yaml"]
 # config_files = ["./case_butane_PEORC.yaml"]
 # config_files = ["./case_butane_transcritical.yaml"]
 # config_files = ["./case_butane_ORC.yaml", "./case_butane_PEORC.yaml","./case_butane_transcritical.yaml"]
@@ -31,5 +31,3 @@ for config in config_files:
 
 # Keep plots open
 plt.show()
-
-

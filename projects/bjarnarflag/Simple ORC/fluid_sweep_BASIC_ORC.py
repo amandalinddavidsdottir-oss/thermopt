@@ -37,6 +37,7 @@ import os, re, copy, yaml
 import numpy as np
 import pandas as pd
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import CoolProp.CoolProp as cp
@@ -50,36 +51,92 @@ from pathlib import Path
 
 BANNED = {
     # ── Ozone-depleting (ODP > 0, Montreal Protocol) ──
-    "R11", "R12", "R13", "R113", "R114", "R115", "R123",
-    "R141b", "R142b", "R22",
+    "R11",
+    "R12",
+    "R13",
+    "R113",
+    "R114",
+    "R115",
+    "R123",
+    "R141b",
+    "R142b",
+    "R22",
     # ── High GWP ≥ 150 (EU 517/2014 & Kigali) ────
-    "R134a", "R125", "R143a", "R227EA", "R236EA", "R236FA",
-    "R245fa", "R365MFC", "R32", "RC318", "R116", "R218",
-    "R23", "R41", "SulfurHexafluoride",
+    "R134a",
+    "R125",
+    "R143a",
+    "R227EA",
+    "R236EA",
+    "R236FA",
+    "R245fa",
+    "R365MFC",
+    "R32",
+    "RC318",
+    "R116",
+    "R218",
+    "R23",
+    "R41",
+    "SulfurHexafluoride",
     # ── Toxic or dangerous ────
-    "CarbonMonoxide", "HydrogenSulfide", "SulfurDioxide",
-    "NitrousOxide", "Methanol", "Ethanol", "Ammonia",
+    "CarbonMonoxide",
+    "HydrogenSulfide",
+    "SulfurDioxide",
+    "NitrousOxide",
+    "Methanol",
+    "Ethanol",
+    "Ammonia",
     # ── Cryogens ─────────
-    "Helium", "Neon", "Argon", "Krypton", "Xenon",
-    "Hydrogen", "Nitrogen", "Oxygen", "Fluorine",
-    "ParaHydrogen", "OrthoHydrogen", "Deuterium",
-    "ParaDeuterium", "OrthoDeuterium", "HeavyWater", "Air",
+    "Helium",
+    "Neon",
+    "Argon",
+    "Krypton",
+    "Xenon",
+    "Hydrogen",
+    "Nitrogen",
+    "Oxygen",
+    "Fluorine",
+    "ParaHydrogen",
+    "OrthoHydrogen",
+    "Deuterium",
+    "ParaDeuterium",
+    "OrthoDeuterium",
+    "HeavyWater",
+    "Air",
     # ── Other unsuitable ─────────
-    "CarbonDioxide", "Acetone", "DiethylEther",
-    "Ethylene", "EthyleneOxide", "CarbonylSulfide",
+    "CarbonDioxide",
+    "Acetone",
+    "DiethylEther",
+    "Ethylene",
+    "EthyleneOxide",
+    "CarbonylSulfide",
 }
 
 FLAGGED = {
-    "Propane": "flammable", "Butane": "flammable", "Isobutane": "flammable",
-    "Isopentane": "flammable", "Neopentane": "flammable", "Pentane": "flammable",
-    "Isohexane": "flammable", "Hexane": "flammable", "Heptane": "flammable",
-    "CycloHexane": "flammable", "CycloPropane": "flammable", "Toluene": "flammable",
-    "EthylBenzene": "flammable", "m-Xylene": "flammable", "o-Xylene": "flammable",
+    "Propane": "flammable",
+    "Butane": "flammable",
+    "Isobutane": "flammable",
+    "Isopentane": "flammable",
+    "Neopentane": "flammable",
+    "Pentane": "flammable",
+    "Isohexane": "flammable",
+    "Hexane": "flammable",
+    "Heptane": "flammable",
+    "CycloHexane": "flammable",
+    "CycloPropane": "flammable",
+    "Toluene": "flammable",
+    "EthylBenzene": "flammable",
+    "m-Xylene": "flammable",
+    "o-Xylene": "flammable",
     "p-Xylene": "flammable",
     "Benzene": "toxic",  # IARC Group 1 carcinogen
-    "MDM": "siloxane", "MM": "siloxane", "MD2M": "siloxane",
-    "MD3M": "siloxane", "MD4M": "siloxane",
-    "D4": "siloxane", "D5": "siloxane", "D6": "siloxane",
+    "MDM": "siloxane",
+    "MM": "siloxane",
+    "MD2M": "siloxane",
+    "MD3M": "siloxane",
+    "MD4M": "siloxane",
+    "D4": "siloxane",
+    "D5": "siloxane",
+    "D6": "siloxane",
 }
 
 
@@ -100,45 +157,51 @@ FLAGGED = {
 
 THERMAL_STABILITY_K = {
     # Hydrocarbons
-    "Toluene":      623,   # ~350 °C — relatively stable aromatic
-    "CycloHexane":  573,   # ~300 °C
-    "Benzene":      573,   # ~300 °C
-    "Pentane":      573,   # ~300 °C
-    "Isopentane":   573,   # ~300 °C
-    "Neopentane":   573,   # ~300 °C
-    "Hexane":       573,   # ~300 °C
-    "Isohexane":    573,   # ~300 °C
-    "Heptane":      573,   # ~300 °C
-    "Octane":       573,   # ~300 °C
-    "Butane":       573,   # ~300 °C
-    "Isobutane":    573,   # ~300 °C
-    "Propane":      623,   # ~350 °C
-    "CycloPropane": 573,   # ~300 °C
+    "Toluene": 623,  # ~350 °C — relatively stable aromatic
+    "CycloHexane": 573,  # ~300 °C
+    "Benzene": 573,  # ~300 °C
+    "Pentane": 573,  # ~300 °C
+    "Isopentane": 573,  # ~300 °C
+    "Neopentane": 573,  # ~300 °C
+    "Hexane": 573,  # ~300 °C
+    "Isohexane": 573,  # ~300 °C
+    "Heptane": 573,  # ~300 °C
+    "Octane": 573,  # ~300 °C
+    "Butane": 573,  # ~300 °C
+    "Isobutane": 573,  # ~300 °C
+    "Propane": 623,  # ~350 °C
+    "CycloPropane": 573,  # ~300 °C
     # v4: Aromatics — generally more stable than linear alkanes
-    "EthylBenzene": 623,   # ~350 °C (similar to toluene)
-    "m-Xylene":     623,   # ~350 °C
-    "o-Xylene":     623,   # ~350 °C
-    "p-Xylene":     623,   # ~350 °C
+    "EthylBenzene": 623,  # ~350 °C (similar to toluene)
+    "m-Xylene": 623,  # ~350 °C
+    "o-Xylene": 623,  # ~350 °C
+    "p-Xylene": 623,  # ~350 °C
     # v4: Heavier alkanes
-    "Nonane":       573,   # ~300 °C
-    "Decane":       573,   # ~300 °C
-    "Undecane":     573,   # ~300 °C
-    "Dodecane":     573,   # ~300 °C
+    "Nonane": 573,  # ~300 °C
+    "Decane": 573,  # ~300 °C
+    "Undecane": 573,  # ~300 °C
+    "Dodecane": 573,  # ~300 °C
     # Siloxanes (thermal degradation above ~300 °C)
-    "MM":    573,  "MDM":  573,  "MD2M": 573,
-    "MD3M":  573,  "MD4M": 573,
-    "D4":    573,  "D5":   573,  "D6":   573,
+    "MM": 573,
+    "MDM": 573,
+    "MD2M": 573,
+    "MD3M": 573,
+    "MD4M": 573,
+    "D4": 573,
+    "D5": 573,
+    "D6": 573,
     # Refrigerants (low-GWP alternatives)
-    "R1233zdE":  473,   # ~200 °C
-    "R1234zeZ":  473,   # ~200 °C
-    "R1234zeE":  443,   # ~170 °C
-    "R1234yf":   423,   # ~150 °C
+    "R1233zdE": 473,  # ~200 °C
+    "R1234zeZ": 473,  # ~200 °C
+    "R1234zeE": 443,  # ~170 °C
+    "R1234yf": 423,  # ~150 °C
 }
 
 
 # ══════════════════════════════════════════════════════════════════════
 #  FLUID CLASSIFICATION
 # ══════════════════════════════════════════════════════════════════════
+
 
 def classify_fluid(name):
     """
@@ -150,7 +213,7 @@ def classify_fluid(name):
         Tc = cp.PropsSI("Tcrit", name)
         T = max(0.7 * Tc, cp.PropsSI("Tmin", name) + 20)
         dT = 2.0
-        s_lo = cp.PropsSI("S", "T", T,      "Q", 1, name)
+        s_lo = cp.PropsSI("S", "T", T, "Q", 1, name)
         s_hi = cp.PropsSI("S", "T", T + dT, "Q", 1, name)
         ds_dT = (s_hi - s_lo) / dT
         if abs(s_lo) < 1e-6:
@@ -173,12 +236,15 @@ def classify_fluid(name):
 #  CANDIDATE SELECTION
 # ══════════════════════════════════════════════════════════════════════
 
-def get_candidate_fluids(config_file,
-                         Tc_margin_above_evap=20,
-                         near_critical_margin=30,
-                         min_cond_pressure=0,
-                         thermal_stability_margin=30,
-                         stability_unknown_Tc_threshold=500):
+
+def get_candidate_fluids(
+    config_file,
+    Tc_margin_above_evap=20,
+    near_critical_margin=30,
+    min_cond_pressure=0,
+    thermal_stability_margin=30,
+    stability_unknown_Tc_threshold=500,
+):
     """
     Filter CoolProp fluids for subcritical ORC compatibility.
 
@@ -203,11 +269,11 @@ def get_candidate_fluids(config_file,
     # ── Extract parameters from YAML ──────────────────────────────
     cfg = yaml.safe_load(Path(config_file).read_text())
     fixed = cfg["problem_formulation"]["fixed_parameters"]
-    dv    = cfg["problem_formulation"]["design_variables"]
+    dv = cfg["problem_formulation"]["design_variables"]
 
-    T_heat_source      = fixed["heat_source"]["inlet_temperature"]
-    T_heat_sink        = fixed["heat_sink"]["inlet_temperature"]
-    T_sink_exit_max    = dv["heat_sink_exit_temperature"]["max"]
+    T_heat_source = fixed["heat_source"]["inlet_temperature"]
+    T_heat_sink = fixed["heat_sink"]["inlet_temperature"]
+    T_sink_exit_max = dv["heat_sink_exit_temperature"]["max"]
 
     # Extract pinch limits from constraints (with defaults)
     heater_pinch_min = 5.0
@@ -220,17 +286,23 @@ def get_candidate_fluids(config_file,
             cooler_pinch_min = c["value"]
 
     # ── Derived filter temperatures ───────────────────────────────
-    T_evap_max  = T_heat_source - heater_pinch_min
-    Tc_min_K    = T_evap_max + Tc_margin_above_evap
-    T_cond_low  = T_heat_sink + cooler_pinch_min
+    T_evap_max = T_heat_source - heater_pinch_min
+    Tc_min_K = T_evap_max + Tc_margin_above_evap
+    T_cond_low = T_heat_sink + cooler_pinch_min
     T_cond_high = T_sink_exit_max - cooler_pinch_min
 
     print(f"\n  FILTER SETTINGS (from {Path(config_file).name})")
     print(f"    T_heat_source     = {T_heat_source - 273.15:.1f} °C")
     print(f"    T_heat_sink       = {T_heat_sink - 273.15:.1f} °C")
-    print(f"    T_evap_max        = {T_evap_max - 273.15:.1f} °C  (T_hs − {heater_pinch_min} K)")
-    print(f"    Tc_min            = {Tc_min_K - 273.15:.1f} °C  (T_evap_max + {Tc_margin_above_evap} K)")
-    print(f"    T_cond range      = [{T_cond_low - 273.15:.1f}, {T_cond_high - 273.15:.1f}] °C")
+    print(
+        f"    T_evap_max        = {T_evap_max - 273.15:.1f} °C  (T_hs − {heater_pinch_min} K)"
+    )
+    print(
+        f"    Tc_min            = {Tc_min_K - 273.15:.1f} °C  (T_evap_max + {Tc_margin_above_evap} K)"
+    )
+    print(
+        f"    T_cond range      = [{T_cond_low - 273.15:.1f}, {T_cond_high - 273.15:.1f}] °C"
+    )
     print(f"    min_cond_pressure = {min_cond_pressure/1e5:.4f} bar")
 
     candidates = []
@@ -259,7 +331,9 @@ def get_candidate_fluids(config_file,
         try:
             p_cond_high = cp.PropsSI("P", "T", T_cond_high, "Q", 0, name)
         except Exception:
-            print(f"    ⊘ {name}: CoolProp fails at T_cond_high={T_cond_high:.1f} K — skipped")
+            print(
+                f"    ⊘ {name}: CoolProp fails at T_cond_high={T_cond_high:.1f} K — skipped"
+            )
             continue  # v3: was `p_cond_high = np.nan` + continue to include — now reject
 
         if p_cond_high < min_cond_pressure:
@@ -272,8 +346,10 @@ def get_candidate_fluids(config_file,
         if T_stability is not None:
             if T_stability < T_heat_source - thermal_stability_margin:
                 # Decomposition temperature is far below heat source → reject
-                print(f"    ⊘ {name}: T_stability={T_stability-273.15:.0f}°C "
-                      f"<< T_hs={T_heat_source-273.15:.0f}°C — rejected (thermal decomposition)")
+                print(
+                    f"    ⊘ {name}: T_stability={T_stability-273.15:.0f}°C "
+                    f"<< T_hs={T_heat_source-273.15:.0f}°C — rejected (thermal decomposition)"
+                )
                 continue
             elif T_stability < T_heat_source:
                 # Within margin — include but flag
@@ -285,9 +361,9 @@ def get_candidate_fluids(config_file,
 
         # ── Vacuum condenser flag (v4 — new) ──────────────────────
         vacuum_flag = None
-        if p_cond_low < 10_000:           # < 0.1 bar → deep vacuum
+        if p_cond_low < 10_000:  # < 0.1 bar → deep vacuum
             vacuum_flag = "deep_vacuum"
-        elif p_cond_low < 101_325:        # < 1 bar → sub-atmospheric
+        elif p_cond_low < 101_325:  # < 1 bar → sub-atmospheric
             vacuum_flag = "sub_atm"
 
         # ── Near-critical flag (v4 — new) ─────────────────────────
@@ -303,27 +379,33 @@ def get_candidate_fluids(config_file,
         elif extra_flags:
             flag = "+".join(extra_flags)
 
-        candidates.append({
-            "name": name,
-            "Tc_C": Tc_K - 273.15,
-            "pc_bar": cp.PropsSI("pcrit", name) / 1e5,
-            "p_cond_low_bar": p_cond_low / 1e5,
-            "p_cond_high_bar": p_cond_high / 1e5,
-            "T_stability_C": (T_stability - 273.15) if T_stability else None,
-            "flag": flag,
-            "fluid_type": classify_fluid(name),
-        })
+        candidates.append(
+            {
+                "name": name,
+                "Tc_C": Tc_K - 273.15,
+                "pc_bar": cp.PropsSI("pcrit", name) / 1e5,
+                "p_cond_low_bar": p_cond_low / 1e5,
+                "p_cond_high_bar": p_cond_high / 1e5,
+                "T_stability_C": (T_stability - 273.15) if T_stability else None,
+                "flag": flag,
+                "fluid_type": classify_fluid(name),
+            }
+        )
 
     candidates.sort(key=lambda f: f["Tc_C"])
 
-    print(f"\n  CANDIDATES | Tc > {Tc_min_K - 273.15:.1f}°C "
-          f"(T_evap_max={T_evap_max-273.15:.1f}°C + {Tc_margin_above_evap}K margin) "
-          f"| {len(candidates)} fluids")
+    print(
+        f"\n  CANDIDATES | Tc > {Tc_min_K - 273.15:.1f}°C "
+        f"(T_evap_max={T_evap_max-273.15:.1f}°C + {Tc_margin_above_evap}K margin) "
+        f"| {len(candidates)} fluids"
+    )
     for f in candidates:
         stab = f"  T_stab={f['T_stability_C']:.0f}°C" if f["T_stability_C"] else ""
-        print(f"    {f['name']:<18} Tc={f['Tc_C']:>6.1f}°C  "
-              f"p_cond=[{f['p_cond_low_bar']:.3f}, {f['p_cond_high_bar']:.3f}] bar  "
-              f"{f['fluid_type']:<12} {f['flag'] or ''}{stab}")
+        print(
+            f"    {f['name']:<18} Tc={f['Tc_C']:>6.1f}°C  "
+            f"p_cond=[{f['p_cond_low_bar']:.3f}, {f['p_cond_high_bar']:.3f}] bar  "
+            f"{f['fluid_type']:<12} {f['flag'] or ''}{stab}"
+        )
     print()
     return candidates
 
@@ -331,6 +413,7 @@ def get_candidate_fluids(config_file,
 # ══════════════════════════════════════════════════════════════════════
 #  CONFIG FILE MANIPULATION  (v3 — fix #1, string replacement)
 # ══════════════════════════════════════════════════════════════════════
+
 
 def _make_tmp_config(raw_yaml, fluid_name, expander_pressure_fraction=None):
     """
@@ -356,8 +439,8 @@ def _make_tmp_config(raw_yaml, fluid_name, expander_pressure_fraction=None):
     # The working_fluid block is the first occurrence of "name:" after
     # "working_fluid:", so we use a targeted regex with DOTALL.
     out = re.sub(
-        r'(working_fluid:\s*\n\s*name:\s*)\S+',
-        rf'\g<1>{fluid_name}',
+        r"(working_fluid:\s*\n\s*name:\s*)\S+",
+        rf"\g<1>{fluid_name}",
         raw_yaml,
         count=1,
     )
@@ -368,9 +451,9 @@ def _make_tmp_config(raw_yaml, fluid_name, expander_pressure_fraction=None):
         # Pattern: "expander_inlet_pressure:" ... "value:" <fraction> "*$working_fluid.critical_point.p"
         # The .*? with DOTALL bridges the lines between the block header and value.
         out = re.sub(
-            r'(expander_inlet_pressure:.*?value:\s*)'
-            r'[\d.]+(\s*\*\s*\$working_fluid\.critical_point\.p)',
-            rf'\g<1>{expander_pressure_fraction}\2',
+            r"(expander_inlet_pressure:.*?value:\s*)"
+            r"[\d.]+(\s*\*\s*\$working_fluid\.critical_point\.p)",
+            rf"\g<1>{expander_pressure_fraction}\2",
             out,
             count=1,
             flags=re.DOTALL,
@@ -390,32 +473,40 @@ def _make_tmp_config(raw_yaml, fluid_name, expander_pressure_fraction=None):
 #    cycle_data["energy_analysis"]  → dict with "system_efficiency", "cycle_efficiency", etc.
 #
 
+
 def _validate_constraints(cycle, slsqp_tol=0.5):
     """
     Check that key physical constraints hold after optimization.
     Returns (is_valid, actuals, violations).
     """
     limits = {
-        "heater_pinch": 5.0,   # K
-        "cooler_pinch":  5.0,   # K
-        "subcooling":    1.0,   # K
-        "superheating":  5.0,   # K
+        "heater_pinch": 5.0,  # K
+        "cooler_pinch": 5.0,  # K
+        "subcooling": 1.0,  # K
+        "superheating": 5.0,  # K
     }
 
     cd = cycle.problem.cycle_data
     actuals = {
-        "heater_pinch":  float(np.min(cd["components"]["heater"]["temperature_difference"])),
-        "cooler_pinch":  float(np.min(cd["components"]["cooler"]["temperature_difference"])),
-        "subcooling":    float(cd["components"]["compressor"]["state_in"].subcooling),
-        "superheating":  float(cd["components"]["expander"]["state_in"].superheating),
+        "heater_pinch": float(
+            np.min(cd["components"]["heater"]["temperature_difference"])
+        ),
+        "cooler_pinch": float(
+            np.min(cd["components"]["cooler"]["temperature_difference"])
+        ),
+        "subcooling": float(cd["components"]["compressor"]["state_in"].subcooling),
+        "superheating": float(cd["components"]["expander"]["state_in"].superheating),
     }
 
-    violations = {k: v for k, v in actuals.items()
-                  if np.isnan(v) or v < limits[k] - slsqp_tol}
+    violations = {
+        k: v for k, v in actuals.items() if np.isnan(v) or v < limits[k] - slsqp_tol
+    }
 
-    print(f"      pinch=[{actuals['heater_pinch']:.2f}, {actuals['cooler_pinch']:.2f}] K  "
-          f"subcool={actuals['subcooling']:.2f} K  "
-          f"superheat={actuals['superheating']:.2f} K")
+    print(
+        f"      pinch=[{actuals['heater_pinch']:.2f}, {actuals['cooler_pinch']:.2f}] K  "
+        f"subcool={actuals['subcooling']:.2f} K  "
+        f"superheat={actuals['superheating']:.2f} K"
+    )
 
     return len(violations) == 0, actuals, violations
 
@@ -424,25 +515,30 @@ def _validate_constraints(cycle, slsqp_tol=0.5):
 #  DESIGN VARIABLE EXTRACTION
 # ══════════════════════════════════════════════════════════════════════
 
+
 def _extract_design_variables(cycle):
     """Pull optimised state points for the results table."""
     cd = cycle.problem.cycle_data
-    exp_in  = cd["components"]["expander"]["state_in"]
+    exp_in = cd["components"]["expander"]["state_in"]
     exp_out = cd["components"]["expander"]["state_out"]
     comp_in = cd["components"]["compressor"]["state_in"]
 
     return {
-        "expander_inlet_T_K":          float(exp_in.temperature),
-        "expander_inlet_p_bar":        float(exp_in.pressure) / 1e5,
-        "expander_inlet_superheat_K":  float(exp_in.superheating),
-        "expander_outlet_T_K":         float(exp_out.temperature),
-        "expander_outlet_p_bar":       float(exp_out.pressure) / 1e5,
+        "expander_inlet_T_K": float(exp_in.temperature),
+        "expander_inlet_p_bar": float(exp_in.pressure) / 1e5,
+        "expander_inlet_superheat_K": float(exp_in.superheating),
+        "expander_outlet_T_K": float(exp_out.temperature),
+        "expander_outlet_p_bar": float(exp_out.pressure) / 1e5,
         "expander_outlet_superheat_K": float(exp_out.superheating),
-        "pump_inlet_T_K":              float(comp_in.temperature),
-        "pump_inlet_p_bar":            float(comp_in.pressure) / 1e5,
-        "pump_inlet_subcooling_K":     float(comp_in.subcooling),
-        "heater_pinch_K":              float(np.min(cd["components"]["heater"]["temperature_difference"])),
-        "cooler_pinch_K":              float(np.min(cd["components"]["cooler"]["temperature_difference"])),
+        "pump_inlet_T_K": float(comp_in.temperature),
+        "pump_inlet_p_bar": float(comp_in.pressure) / 1e5,
+        "pump_inlet_subcooling_K": float(comp_in.subcooling),
+        "heater_pinch_K": float(
+            np.min(cd["components"]["heater"]["temperature_difference"])
+        ),
+        "cooler_pinch_K": float(
+            np.min(cd["components"]["cooler"]["temperature_difference"])
+        ),
     }
 
 
@@ -450,8 +546,10 @@ def _extract_design_variables(cycle):
 #  MAIN SWEEP  (v3 — single-start + post-convergence validation)
 # ══════════════════════════════════════════════════════════════════════
 
-def run_fluid_sweep(config_file, candidates, output_dir="results/fluid_sweep",
-                    save_results=True):
+
+def run_fluid_sweep(
+    config_file, candidates, output_dir="results/fluid_sweep", save_results=True
+):
     """
     For each candidate fluid, run a single optimisation using the
     default starting point from the YAML, then validate constraints.
@@ -469,10 +567,15 @@ def run_fluid_sweep(config_file, candidates, output_dir="results/fluid_sweep",
 
     for i, fluid in enumerate(candidates):
         name = fluid["name"]
-        stab_str = (f", T_stab={fluid['T_stability_C']:.0f}°C"
-                    if fluid.get("T_stability_C") else "")
-        print(f"\n  [{i+1}/{len(candidates)}] {name}  "
-              f"(Tc={fluid['Tc_C']:.1f}°C, {fluid['fluid_type']}{stab_str})")
+        stab_str = (
+            f", T_stab={fluid['T_stability_C']:.0f}°C"
+            if fluid.get("T_stability_C")
+            else ""
+        )
+        print(
+            f"\n  [{i+1}/{len(candidates)}] {name}  "
+            f"(Tc={fluid['Tc_C']:.1f}°C, {fluid['fluid_type']}{stab_str})"
+        )
 
         # v3 FIX #1: string replacement, not yaml.dump
         tmp_yaml = _make_tmp_config(raw_yaml, name)
@@ -537,24 +640,30 @@ def run_fluid_sweep(config_file, candidates, output_dir="results/fluid_sweep",
                     else:
                         net_power = np.nan
 
-                    row.update({
-                        "status": "converged",
-                        "system_efficiency [-]": eta,
-                        "cycle_efficiency [-]": ea["cycle_efficiency"],
-                        "net_power [kW]": net_power / 1e3 if not np.isnan(net_power) else np.nan,
-                        "mass_flow [kg/s]": ea["mass_flow_working_fluid"],
-                        "backwork_ratio [-]": ea["backwork_ratio"],
-                        "heater_pinch [K]": actuals["heater_pinch"],
-                        "cooler_pinch [K]": actuals["cooler_pinch"],
-                        "subcooling [K]": actuals["subcooling"],
-                        "superheating [K]": actuals["superheating"],
-                    })
+                    row.update(
+                        {
+                            "status": "converged",
+                            "system_efficiency [-]": eta,
+                            "cycle_efficiency [-]": ea["cycle_efficiency"],
+                            "net_power [kW]": (
+                                net_power / 1e3 if not np.isnan(net_power) else np.nan
+                            ),
+                            "mass_flow [kg/s]": ea["mass_flow_working_fluid"],
+                            "backwork_ratio [-]": ea["backwork_ratio"],
+                            "heater_pinch [K]": actuals["heater_pinch"],
+                            "cooler_pinch [K]": actuals["cooler_pinch"],
+                            "subcooling [K]": actuals["subcooling"],
+                            "superheating [K]": actuals["superheating"],
+                        }
+                    )
                     row.update(_extract_design_variables(cycle))
 
-                    print(f"    ✓ η_sys={eta*100:.2f}%  "
-                          f"pinch=[{actuals['heater_pinch']:.1f}, {actuals['cooler_pinch']:.1f}] K  "
-                          f"subcool={actuals['subcooling']:.1f} K  "
-                          f"superheat={actuals['superheating']:.1f} K")
+                    print(
+                        f"    ✓ η_sys={eta*100:.2f}%  "
+                        f"pinch=[{actuals['heater_pinch']:.1f}, {actuals['cooler_pinch']:.1f}] K  "
+                        f"subcool={actuals['subcooling']:.1f} K  "
+                        f"superheat={actuals['superheating']:.1f} K"
+                    )
 
         except Exception as e:
             row["status"] = f"error: {str(e)[:60]}"
@@ -568,9 +677,11 @@ def run_fluid_sweep(config_file, candidates, output_dir="results/fluid_sweep",
         results.append(row)
 
     # ── Build DataFrame, save ─────────────────────────────────────
-    df = (pd.DataFrame(results)
-          .sort_values("system_efficiency [-]", ascending=False, na_position="last")
-          .reset_index(drop=True))
+    df = (
+        pd.DataFrame(results)
+        .sort_values("system_efficiency [-]", ascending=False, na_position="last")
+        .reset_index(drop=True)
+    )
     xlsx = os.path.join(output_dir, "fluid_sweep_results.xlsx")
     df.to_excel(xlsx, index=False)
 
@@ -579,8 +690,10 @@ def run_fluid_sweep(config_file, candidates, output_dir="results/fluid_sweep",
     print(f"\n  RESULTS | ✓ {len(conv)}  ✗ {len(df)-len(conv)}")
     for r, (_, row) in enumerate(conv.iterrows(), 1):
         flag_str = f"  ⚠ {row['flag']}" if row["flag"] else ""
-        print(f"    {r}. {row['fluid']:<16} η_sys={row['system_efficiency [-]']*100:.2f}%  "
-              f"{row['fluid_type']}{flag_str}")
+        print(
+            f"    {r}. {row['fluid']:<16} η_sys={row['system_efficiency [-]']*100:.2f}%  "
+            f"{row['fluid_type']}{flag_str}"
+        )
     for _, row in df[df["status"] != "converged"].iterrows():
         print(f"    ✗ {row['fluid']:<16} {row['status']}")
     print(f"  Saved: {xlsx}\n")
@@ -593,22 +706,22 @@ def run_fluid_sweep(config_file, candidates, output_dir="results/fluid_sweep",
 # ══════════════════════════════════════════════════════════════════════
 
 _FLAG_COLORS = {
-    None:                "#2980b9",   # blue  — no flag
-    "flammable":         "#e74c3c",   # red
-    "toxic":             "#c0392b",   # dark red
-    "siloxane":          "#f39c12",   # amber
-    "thermal_risk":      "#9b59b6",   # purple
-    "stability_unknown": "#8e44ad",   # dark purple
-    "deep_vacuum":       "#1abc9c",   # teal
-    "sub_atm":           "#85c1e9",   # light blue
-    "near_critical":     "#e67e22",   # orange
+    None: "#2980b9",  # blue  — no flag
+    "flammable": "#e74c3c",  # red
+    "toxic": "#c0392b",  # dark red
+    "siloxane": "#f39c12",  # amber
+    "thermal_risk": "#9b59b6",  # purple
+    "stability_unknown": "#8e44ad",  # dark purple
+    "deep_vacuum": "#1abc9c",  # teal
+    "sub_atm": "#85c1e9",  # light blue
+    "near_critical": "#e67e22",  # orange
 }
 
 _TYPE_HATCHES = {
-    "wet":         "//",
-    "dry":         "",
-    "isentropic":  "...",
-    "unknown":     "xx",
+    "wet": "//",
+    "dry": "",
+    "isentropic": "...",
+    "unknown": "xx",
 }
 
 
@@ -624,8 +737,16 @@ def _get_flag_color(flag):
         return _FLAG_COLORS[None]
     flag_str = str(flag)
     # Check in priority order
-    for key in ("toxic", "thermal_risk", "stability_unknown", "near_critical",
-                "deep_vacuum", "sub_atm", "flammable", "siloxane"):
+    for key in (
+        "toxic",
+        "thermal_risk",
+        "stability_unknown",
+        "near_critical",
+        "deep_vacuum",
+        "sub_atm",
+        "flammable",
+        "siloxane",
+    ):
         if key in flag_str:
             return _FLAG_COLORS[key]
     return "#999999"
@@ -643,26 +764,31 @@ def plot_results(df, output_dir=None, filename="fluid_comparison.png"):
 
     fig, ax = plt.subplots(figsize=(10, max(4, 0.45 * len(df_ok))))
 
-    colors  = [_get_flag_color(f) for f in df_ok["flag"]]
+    colors = [_get_flag_color(f) for f in df_ok["flag"]]
     hatches = [_TYPE_HATCHES.get(t, "") for t in df_ok["fluid_type"]]
 
     bars = ax.barh(
         range(len(df_ok)),
         df_ok["system_efficiency [-]"] * 100,
-        color=colors, edgecolor="k", lw=0.6,
+        color=colors,
+        edgecolor="k",
+        lw=0.6,
     )
     for bar, h in zip(bars, hatches):
         bar.set_hatch(h)
 
     ax.set_yticks(range(len(df_ok)))
-    ax.set_yticklabels([
-        f"{r['fluid']}  ({r['fluid_type']}, Tc={r['Tc [°C]']:.0f}°C)"
-        for _, r in df_ok.iterrows()
-    ])
+    ax.set_yticklabels(
+        [
+            f"{r['fluid']}  ({r['fluid_type']}, Tc={r['Tc [°C]']:.0f}°C)"
+            for _, r in df_ok.iterrows()
+        ]
+    )
     ax.set_xlabel("System Efficiency [%]")
     ax.set_title("Working Fluid Comparison — Subcritical ORC", fontweight="bold")
 
     from matplotlib.patches import Patch
+
     legend_elements = [
         # ── Colour legend (flags) ──
         Patch(facecolor="#2980b9", edgecolor="k", label="No flag"),
@@ -674,12 +800,17 @@ def plot_results(df, output_dir=None, filename="fluid_comparison.png"):
         Patch(facecolor="#85c1e9", edgecolor="k", label="Sub-atmospheric"),
         Patch(facecolor="#e67e22", edgecolor="k", label="Near critical"),
         # ── Hatch legend (fluid type) ──
-        Patch(facecolor="white",  edgecolor="k", hatch="//",  label="Wet"),
-        Patch(facecolor="white",  edgecolor="k", hatch="",    label="Dry"),
-        Patch(facecolor="white",  edgecolor="k", hatch="...", label="Isentropic"),
+        Patch(facecolor="white", edgecolor="k", hatch="//", label="Wet"),
+        Patch(facecolor="white", edgecolor="k", hatch="", label="Dry"),
+        Patch(facecolor="white", edgecolor="k", hatch="...", label="Isentropic"),
     ]
-    ax.legend(handles=legend_elements, loc="lower right", fontsize=7,
-              title="Colour = flag (priority) | Hatch = fluid type", title_fontsize=7)
+    ax.legend(
+        handles=legend_elements,
+        loc="lower right",
+        fontsize=7,
+        title="Colour = flag (priority) | Hatch = fluid type",
+        title_fontsize=7,
+    )
 
     fig.tight_layout()
 

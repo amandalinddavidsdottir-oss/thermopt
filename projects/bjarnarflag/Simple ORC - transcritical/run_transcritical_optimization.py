@@ -9,12 +9,13 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
-#---- importing post processing files:
+# ---- importing post processing files:
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "shared_utilities"))
 from exergy_analysis import perform_exergy_analysis, plot_heat_source_utilization
 from plot_TQ_diagram import plot_TQ_diagram
 from validation_checks import run_validation_checks
-#-----
+
+# -----
 
 warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
 
@@ -24,8 +25,10 @@ warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
 # ══════════════════════════════════════════════════════════════════════
 MODE = "optimize"  # "optimize" | "sweep" | "parametric"
 
-#CONFIG_FILE = Path(__file__).with_name("case_butane_transcritical_bjarnarflag.yaml")
-CONFIG_FILE = Path(__file__).with_name("case_butane_transcritical_recuperated_bjarnarflag.yaml")
+# CONFIG_FILE = Path(__file__).with_name("case_butane_transcritical_bjarnarflag.yaml")
+CONFIG_FILE = Path(__file__).with_name(
+    "case_butane_transcritical_recuperated_bjarnarflag.yaml"
+)
 
 SWEEP_OUTPUT_DIR = "results/fluid_sweep_TRANSCRITICAL_ORC"
 
@@ -61,9 +64,15 @@ def run_optimize(config_file):
     print("\n" + "=" * 76)
     print("  MASS FLOW RATES")
     print("=" * 76)
-    print(f"  Well (heating fluid)               :  {ea.get('mass_flow_heating_fluid', 0):.2f} kg/s")
-    print(f"  Working fluid                      :  {ea.get('mass_flow_working_fluid', 0):.2f} kg/s")
-    print(f"  Cooling fluid                      :  {ea.get('mass_flow_cooling_fluid', 0):.2f} kg/s")
+    print(
+        f"  Well (heating fluid)               :  {ea.get('mass_flow_heating_fluid', 0):.2f} kg/s"
+    )
+    print(
+        f"  Working fluid                      :  {ea.get('mass_flow_working_fluid', 0):.2f} kg/s"
+    )
+    print(
+        f"  Cooling fluid                      :  {ea.get('mass_flow_cooling_fluid', 0):.2f} kg/s"
+    )
     print("=" * 76 + "\n")
 
     # ────────────────────────────POST-PROCESSING ───────────────────────
@@ -83,7 +92,8 @@ def run_optimize(config_file):
 
     # Heat source utilization curve
     fig, axes, sweep = plot_heat_source_utilization(
-        cycle, config_file=config_file,
+        cycle,
+        config_file=config_file,
         savefig=os.path.join(graph_dir, "utilization_curve.png"),
     )
 
@@ -109,7 +119,11 @@ def run_optimize(config_file):
 def run_sweep(config_file, output_dir):
     """Run fluid sweep across all candidates using config as template."""
 
-    from fluid_sweep_TRANSCRITICAL_ORC import get_candidate_fluids, run_fluid_sweep, plot_results
+    from fluid_sweep_TRANSCRITICAL_ORC import (
+        get_candidate_fluids,
+        run_fluid_sweep,
+        plot_results,
+    )
 
     candidates = get_candidate_fluids(config_file)
     df = run_fluid_sweep(config_file, candidates, output_dir=output_dir)
@@ -120,18 +134,19 @@ def run_sweep(config_file, output_dir):
 #  MODE 3: PARAMETRIC STUDY (n_stages × RPM)
 # ══════════════════════════════════════════════════════════════════════
 
+
 def _modify_yaml(yaml_text, n_stages, RPM):
     """Replace n_stages and RPM for the expander."""
     yaml_text = re.sub(
-        r'(expander:.*?n_stages:\s*)\d+',
-        rf'\g<1>{n_stages}',
+        r"(expander:.*?n_stages:\s*)\d+",
+        rf"\g<1>{n_stages}",
         yaml_text,
         count=1,
         flags=re.DOTALL,
     )
     yaml_text = re.sub(
-        r'(expander:.*?RPM:\s*)\d+',
-        rf'\g<1>{RPM}',
+        r"(expander:.*?RPM:\s*)\d+",
+        rf"\g<1>{RPM}",
         yaml_text,
         count=1,
         flags=re.DOTALL,
@@ -161,8 +176,9 @@ def _extract_results(cycle, config_file, n_stages, RPM):
     result["eta_cycle"] = energy.get("cycle_efficiency", None)
     result["W_net_kW"] = energy.get("net_system_power", 0) / 1e3
     result["W_gross_kW"] = energy.get("gross_power", 0) / 1e3
-    result["Q_in_kW"] = energy.get("total_heat_input",
-                                    energy.get("heater_heat_flow", 0)) / 1e3
+    result["Q_in_kW"] = (
+        energy.get("total_heat_input", energy.get("heater_heat_flow", 0)) / 1e3
+    )
     result["Q_available_kW"] = energy.get("available_heat", 0) / 1e3
     result["heat_utilization"] = energy.get("heat_utilization", None)
     result["m_dot_wf_kg_s"] = energy.get("mass_flow_working_fluid", None)
@@ -275,9 +291,11 @@ def run_parametric(config_files, stages_list, rpms, output_dir):
         for RPM in rpms:
             for n in stages_list:
                 run_count += 1
-                print(f"\n  [{run_count}/{total_runs}] "
-                      f"{n}-stage, {RPM} RPM ... ",
-                      end="", flush=True)
+                print(
+                    f"\n  [{run_count}/{total_runs}] " f"{n}-stage, {RPM} RPM ... ",
+                    end="",
+                    flush=True,
+                )
 
                 result = _run_single(config_file, n, RPM)
                 results.append(result)
@@ -306,9 +324,16 @@ def run_parametric(config_files, stages_list, rpms, output_dir):
     print("=" * 76)
 
     display_cols = ["config", "n_stages", "RPM", "converged"]
-    for col in ["eta_system", "W_net_kW",
-                 "eta_turbine", "Ns_max", "any_stage_zero",
-                 "SP", "Vr", "m_dot_wf_kg_s"]:
+    for col in [
+        "eta_system",
+        "W_net_kW",
+        "eta_turbine",
+        "Ns_max",
+        "any_stage_zero",
+        "SP",
+        "Vr",
+        "m_dot_wf_kg_s",
+    ]:
         if col in df.columns:
             display_cols.append(col)
 

@@ -1,9 +1,15 @@
 import copy
+import numpy as np
 import jaxprop as cpx
 
 from .. import utilities
 
-from ..components import compression_process, expansion_process, heat_exchanger, compute_component_energy_flows
+from ..components import (
+    compression_process,
+    expansion_process,
+    heat_exchanger,
+    compute_component_energy_flows,
+)
 
 COLORS_MATLAB = utilities.COLORS_MATLAB
 
@@ -18,9 +24,6 @@ def evaluate_cycle(
     # Create copies to not change the originals
     variables = copy.deepcopy(variables)
     parameters = copy.deepcopy(parameters)
-
-    # Detect mass-flow mode vs net-power mode
-    mass_flow_mode = "well_mass_flow_rate" in parameters
 
     # Initialize fluid objects
     working_fluid = cpx.Fluid(
@@ -46,6 +49,12 @@ def evaluate_cycle(
         cpx.PT_INPUTS, p_source_out, T_source_out_min
     )
 
+    # Ambient reference state for the heat source (for η_utilization / η_ambient)
+    # Dead state (T₀, p₀) per DiPippo utilization efficiency convention
+    T_ambient = special_points["ambient_temperature"]
+    p_ambient = special_points["ambient_pressure"]
+    source_out_ambient = heating_fluid.get_state(cpx.PT_INPUTS, p_ambient, T_ambient)
+
     # Extract pressure drops and give short names
     dp_heater_h = parameters["heater"].pop("pressure_drop_hot_side")
     dp_heater_c = parameters["heater"].pop("pressure_drop_cold_side")
@@ -69,9 +78,13 @@ def evaluate_cycle(
     else:
         recuperator_effectiveness = 0.0
 
-    # In mass-flow mode, expander mass flow rate is a design variable
-    if mass_flow_mode:
-        expander_mass_flow_rate = variables.pop("expander_mass_flow_rate")
+    # Mass flow rates are always design variables
+    m_total = variables.pop("mass_flow_rate_cycle")
+    m_sink = variables.pop("mass_flow_rate_sink")
+    if "well_mass_flow_rate" in parameters:
+        m_source = parameters.pop("well_mass_flow_rate")
+    else:
+        m_source = variables.pop("well_mass_flow_rate")
 
     # Evaluate  compressor
     dp = (1.0 - dp_heater_c) * (1.0 - dp_recup_c)
@@ -96,35 +109,27 @@ def evaluate_cycle(
     # Build data_in for correlation-based efficiency types
     expander_data_in = {}
     if expander_efficiency_type == "astolfi-stacking":
-        if not mass_flow_mode:
-            raise ValueError(
-                "Macchi-Astolfi / Astolfi-stacking efficiency requires mass-flow mode "
-                "(set well_mass_flow_rate instead of net_power in YAML)."
-            )
         expander_data_in["n_stages"] = parameters["expander"].pop("n_stages")
         if "RPM" in parameters["expander"]:
             expander_data_in["RPM"] = parameters["expander"].pop("RPM")
+        intermediate_pressures = []
+        for i in range(1, 10):
+            key = f"expander_intermediate_pressure_{i}"
+            if key in variables:
+                intermediate_pressures.append(variables.pop(key))
+        if intermediate_pressures:
+            expander_data_in["intermediate_pressures"] = intermediate_pressures
 
-    if mass_flow_mode:
-        expander = expansion_process(
-            working_fluid,
-            expander_inlet_h,
-            expander_inlet_p,
-            expander_outlet_p,
-            expander_efficiency,
-            expander_efficiency_type,
-            mass_flow=expander_mass_flow_rate,
-            data_in=expander_data_in,
-        )
-    else:
-        expander = expansion_process(
-            working_fluid,
-            expander_inlet_h,
-            expander_inlet_p,
-            expander_outlet_p,
-            expander_efficiency,
-            expander_efficiency_type,
-        )
+    expander = expansion_process(
+        working_fluid,
+        expander_inlet_h,
+        expander_inlet_p,
+        expander_outlet_p,
+        expander_efficiency,
+        expander_efficiency_type,
+        mass_flow=m_total,
+        data_in=expander_data_in,
+    )
 
     # Evaluate recuperator
     eps = recuperator_effectiveness
@@ -154,6 +159,9 @@ def evaluate_cycle(
         h_out_cold_actual,
         p_in_cold,
         p_out_cold,
+        mass_flow_hot=m_total,
+        mass_flow_cold=m_total,
+        enforce_energy_balance=False,
         counter_current=True,
         num_steps=num_elements,
     )
@@ -163,9 +171,8 @@ def evaluate_cycle(
     p_in_cold = recuperator["cold_side"]["state_out"].p
     h_out_cold = expander["state_in"].h
     p_out_cold = expander["state_in"].p
-    T_in_hot = parameters["heat_source"].pop("inlet_temperature")
     p_in_hot = parameters["heat_source"].pop("inlet_pressure")
-    h_in_hot = heating_fluid.get_state(cpx.PT_INPUTS, p_in_hot, T_in_hot).h
+    h_in_hot = parameters["heat_source"].pop("inlet_enthalpy")
     T_out_hot = heat_source_temperature_out
     p_out_hot = p_in_hot * (1 - dp_heater_h)
     h_out_hot = heating_fluid.get_state(cpx.PT_INPUTS, p_out_hot, T_out_hot).h
@@ -181,6 +188,8 @@ def evaluate_cycle(
         h_out_cold,
         p_in_cold,
         p_out_cold,
+        mass_flow_hot=m_source,
+        mass_flow_cold=m_total,
         counter_current=True,
         num_steps=num_elements,
     )
@@ -238,38 +247,19 @@ def evaluate_cycle(
         h_out_cold,
         p_in_cold,
         p_out_cold,
+        mass_flow_hot=m_total,
+        mass_flow_cold=m_sink,
         counter_current=True,
         num_steps=num_elements,
     )
 
-    # Compute mass flow rates
-    expander_work = expander["specific_work"]
-    compression_work = compressor["specific_work"]
-    if mass_flow_mode:
-        # Mass-flow mode: well mass flow is given, compute net power
-        well_mass_flow_rate = parameters.pop("well_mass_flow_rate")
-        m_source = well_mass_flow_rate
-        m_total = m_source / heater["mass_flow_ratio"]
-        m_sink = m_total / cooler["mass_flow_ratio"]
-        W_net = (expander_work - compression_work) * m_total
-    else:
-        # Net-power mode: net power is given, compute mass flows
-        W_net = parameters.pop("net_power")
-        m_total = W_net / (expander_work - compression_work)
-        m_source = m_total * heater["mass_flow_ratio"]
-        m_sink = m_total / cooler["mass_flow_ratio"]
-
-    # Add the mass flow to the components
-    heater["hot_side"]["mass_flow"] = m_source
-    heater["cold_side"]["mass_flow"] = m_total
-    recuperator["hot_side"]["mass_flow"] = m_total
-    recuperator["cold_side"]["mass_flow"] = m_total
-    cooler["hot_side"]["mass_flow"] = m_total
-    cooler["cold_side"]["mass_flow"] = m_sink
+    # Assign mass flows to turbomachinery
     expander["mass_flow"] = m_total
     compressor["mass_flow"] = m_total
     heat_source_pump["mass_flow"] = m_source
     heat_sink_pump["mass_flow"] = m_sink
+
+    W_net = (expander["specific_work"] - compressor["specific_work"]) * m_total
 
     # Summary of components
     components = {
@@ -291,15 +281,18 @@ def evaluate_cycle(
     W_aux = heat_source_pump["power"] + heat_sink_pump["power"]
     W_in = W_comp + W_aux
     Q_in_max = m_source * (heater["hot_side"]["state_in"].h - source_out_min.h)
+    Q_in_max_ambient = m_source * (heater["hot_side"]["state_in"].h - source_out_ambient.h)
     cycle_efficiency = (W_out - W_in) / Q_in
     system_efficiency = (W_out - W_in) / Q_in_max
+    system_efficiency_ambient = (W_out - W_in) / Q_in_max_ambient
     backwork_ratio = W_comp / W_out
-    energy_balance = (Q_in + W_comp) - (W_out + Q_out)  # Ignore pumps
+    energy_balance = (Q_in + W_comp + W_aux) - (W_out + Q_out)
 
     # Define dictionary with 1st Law analysis
     energy_analysis = {
         "heater_heat_flow": Q_in,
         "heater_heat_flow_max": Q_in_max,
+        "heater_heat_flow_max_ambient": Q_in_max_ambient,
         "recuperator_heat_flow": recuperator["heat_flow"],
         "cooler_heat_flow": Q_out,
         "expander_power": W_out,
@@ -313,22 +306,38 @@ def evaluate_cycle(
         "mass_flow_cooling_fluid": m_sink,
         "cycle_efficiency": cycle_efficiency,
         "system_efficiency": system_efficiency,
+        "system_efficiency_ambient": system_efficiency_ambient,
         "backwork_ratio": backwork_ratio,
         "energy_balance": energy_balance,
     }
 
     # Evaluate objective function and constraints
-    # In mass-flow mode, expose variables so constraints can reference them
-    if mass_flow_mode:
-        output = {
-            "components": components,
-            "energy_analysis": energy_analysis,
-            "variables": {"expander_mass_flow_rate": expander_mass_flow_rate},
-        }
-    else:
-        output = {"components": components, "energy_analysis": energy_analysis}
+    variables_out = {
+        "mass_flow_rate_cycle": m_total,
+        "mass_flow_rate_sink": m_sink,
+    }
+    if expander_efficiency_type == "astolfi-stacking":
+        for i, p in enumerate(intermediate_pressures):
+            variables_out[f"expander_intermediate_pressure_{i+1}"] = p
+    output = {
+        "components": components,
+        "energy_analysis": energy_analysis,
+        "variables": variables_out,
+    }
     f = utilities.evaluate_objective_function(output, objective_function)
-    c_eq, c_ineq, constraint_report = utilities.evaluate_constraints(output, constraints)
+    c_eq, c_ineq, constraint_report = utilities.evaluate_constraints(
+        output, constraints
+    )
+
+    # Automatically add heat exchanger energy balance residuals as equality constraints
+    c_eq_hx = np.array([
+        component["energy_balance_residual"]
+        for component in components.values()
+        if component.get("type") == "heat_exchanger"
+        and component.get("energy_balance_residual") is not None
+    ])
+    if len(c_eq_hx) > 0:
+        c_eq = np.concatenate([c_eq, c_eq_hx])
 
     # Set colors for plotting
     orange = COLORS_MATLAB[1]

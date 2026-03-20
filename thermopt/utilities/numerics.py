@@ -59,19 +59,27 @@ def is_numeric(value):
 
     # NumPy scalar types
     if isinstance(value, np.generic):
-        return np.issubdtype(type(value), np.number) and not np.issubdtype(type(value), np.bool_)
+        return np.issubdtype(type(value), np.number) and not np.issubdtype(
+            type(value), np.bool_
+        )
 
     # NumPy arrays
     if isinstance(value, np.ndarray):
-        return np.issubdtype(value.dtype, np.number) and not np.issubdtype(value.dtype, np.bool_)
+        return np.issubdtype(value.dtype, np.number) and not np.issubdtype(
+            value.dtype, np.bool_
+        )
 
     # JAX scalar types
     if isinstance(value, jnp.ndarray) and value.ndim == 0:
-        return jnp.issubdtype(value.dtype, jnp.number) and not jnp.issubdtype(value.dtype, jnp.bool_)
+        return jnp.issubdtype(value.dtype, jnp.number) and not jnp.issubdtype(
+            value.dtype, jnp.bool_
+        )
 
     # JAX arrays
     if isinstance(value, jnp.ndarray):
-        return jnp.issubdtype(value.dtype, jnp.number) and not jnp.issubdtype(value.dtype, jnp.bool_)
+        return jnp.issubdtype(value.dtype, jnp.number) and not jnp.issubdtype(
+            value.dtype, jnp.bool_
+        )
 
     return False
 

@@ -40,10 +40,14 @@ CYCLE_TOPOLOGIES = {
     "power_split_compression": cycles.cycle_power_split_compression.evaluate_cycle,
     "split_compression": cycles.cycle_power_split_compression.evaluate_cycle,
     "recompression": cycles.cycle_power_split_compression.evaluate_cycle,
-    "dual_pressure": cycles.cycle_power_dual_pressure.evaluate_cycle,        # ← Added
-    "power_dual_pressure": cycles.cycle_power_dual_pressure.evaluate_cycle,  # ← Added
-    "recuperated_dual_pressure": cycles.cycle_power_recuperated_dual_pressure.evaluate_cycle,          # ← Added
-    "power_recuperated_dual_pressure": cycles.cycle_power_recuperated_dual_pressure.evaluate_cycle,    # ← Added
+    "dual_pressure": cycles.cycle_power_dual_pressure_single_brine.evaluate_cycle,
+    "power_dual_pressure": cycles.cycle_power_dual_pressure_single_brine.evaluate_cycle,
+    "recuperated_dual_pressure": cycles.cycle_power_recuperated_dual_pressure_single_brine.evaluate_cycle,
+    "power_recuperated_dual_pressure": cycles.cycle_power_recuperated_dual_pressure_single_brine.evaluate_cycle,
+    "dual_pressure_single_brine": cycles.cycle_power_dual_pressure_single_brine.evaluate_cycle,
+    "recuperated_dual_pressure_single_brine": cycles.cycle_power_recuperated_dual_pressure_single_brine.evaluate_cycle,
+    "dual_pressure_dual_brine": cycles.cycle_power_dual_pressure_dual_brine.evaluate_cycle,
+    "recuperated_dual_pressure_dual_brine": cycles.cycle_power_recuperated_dual_pressure_dual_brine.evaluate_cycle,
     "refrigeration_simple": cycles.cycle_refrigeration_simple.evaluate_cycle,
     "refrigeration_recuperated": cycles.cycle_refrigeration_recuperated.evaluate_cycle,
     "PTES_recuperated": cycles.cycle_PTES_recuperated.evaluate_cycle,
@@ -120,7 +124,7 @@ class ThermodynamicCycleOptimization:
             **solver_options,  # Pass all options except "callbacks"
             callback_functions=None,
             plot_scale_constraints="log",
-            tolerance_check_cache=1e-10
+            tolerance_check_cache=1e-10,
         )
         return self.solver
 
@@ -162,7 +166,7 @@ class ThermodynamicCycleOptimization:
         constraints = self.config["problem_formulation"].get("constraints", [])
         if not isinstance(constraints, list):
             constraints = list(constraints)
-        
+
         # Find existing constraint
         for c in constraints:
             if c.get("variable") == variable:
@@ -187,7 +191,6 @@ class ThermodynamicCycleOptimization:
         self.config["problem_formulation"]["constraints"] = constraints
         self.load_config(self.config)
 
-
     def run_optimization(self, x0=None):
         """
         Executes the optimization process.
@@ -206,7 +209,11 @@ class ThermodynamicCycleOptimization:
         # Plot convergence callback is treated as a special case
         for key, func in callback_registry.items():
             if callback_flags.get(key, False):
-                func() if key == "plot_convergence" else self.solver.callback_functions.append(func)
+                (
+                    func()
+                    if key == "plot_convergence"
+                    else self.solver.callback_functions.append(func)
+                )
 
         # Run the optimization for the specified or default initial guess
         if x0 is None:
@@ -235,15 +242,15 @@ class ThermodynamicCycleOptimization:
         plt.close(self.problem.figure)
         # self.save_solver_pickle()
 
-
     def save_solver_pickle(self):
         """
         Sanitize solver (including deeply nested problem) and save it to a pickle file.
         """
         filename = "optimization_solver"
         # utils.dump_object_structure(self.solver, log_file="testing.txt")
-        utils.save_to_pickle(self.solver, filename=filename, out_dir=self.out_dir, timestamp=False)
-
+        utils.save_to_pickle(
+            self.solver, filename=filename, out_dir=self.out_dir, timestamp=False
+        )
 
     def plot_convergence_history(self, savefile=False, showfig=True):
         filename = "convergence_history"
@@ -257,13 +264,18 @@ class ThermodynamicCycleOptimization:
     def print_convergence_history(self, savefile=False):
         filename = "convergence_history.txt"
         self.solver.print_convergence_history(
-            savefile=savefile, filename=filename, output_dir=self.out_dir, to_console=False
+            savefile=savefile,
+            filename=filename,
+            output_dir=self.out_dir,
+            to_console=False,
         )
 
     def print_optimization_report(self, savefile=False):
         filename = "optimization_report.txt"
         self.solver.print_optimization_report(
-            savefile=savefile, filename=filename, output_dir=self.out_dir,
+            savefile=savefile,
+            filename=filename,
+            output_dir=self.out_dir,
             include_design_variables=True,
             include_constraints=True,
             include_kkt_conditions=True,
@@ -337,7 +349,7 @@ class ThermodynamicCycleOptimization:
             savefile=True,
             filename=f"iteration_{iter:03d}.txt",
             output_dir=self.optimization_dir,
-            to_console=False
+            to_console=False,
         )
 
     def plot_cycle_callback(self, x, iter):
@@ -360,7 +372,6 @@ class ThermodynamicCycleOptimization:
     def _init_convergence_callback(self):
         self.solver._plot_convergence_callback([], [], initialize=True)
         self.solver.callback_functions.append(self.solver._plot_convergence_callback)
-
 
 
 class ThermodynamicCycleProblem(psv.OptimizationProblem):
@@ -831,8 +842,8 @@ class ThermodynamicCycleProblem(psv.OptimizationProblem):
                 "color": plot_params["color"],
                 "marker": "none",
                 "label": name,
-                #"zorder": 1, 
-                "zorder": 10, # Raise z-order so cycle processes are drawn above the phase diagram
+                # "zorder": 1,
+                "zorder": 10,  # Raise z-order so cycle processes are drawn above the phase diagram
             }
 
             point_kwargs = {
@@ -842,8 +853,8 @@ class ThermodynamicCycleProblem(psv.OptimizationProblem):
                 "markeredgewidth": plot_params["markeredgewidth"],
                 "markerfacecolor": plot_params["markerfacecolor"],
                 "color": plot_params["color"],
-                #"zorder": 2,
-                "zorder": 11, # Raise z-order so cycle processes are drawn above the phase diagram
+                # "zorder": 2,
+                "zorder": 11,  # Raise z-order so cycle processes are drawn above the phase diagram
             }
 
             # Create new plot elements if data is not None
@@ -1188,12 +1199,10 @@ class ThermodynamicCycleProblem(psv.OptimizationProblem):
                 state_in = component["state_in"]
                 state_out = component["state_out"]
                 data_rows.append(
-                    [f"{component_name}_in"]
-                    + [state_in[key] for key in variable_map]
+                    [f"{component_name}_in"] + [state_in[key] for key in variable_map]
                 )
                 data_rows.append(
-                    [f"{component_name}_out"]
-                    + [state_out[key] for key in variable_map]
+                    [f"{component_name}_out"] + [state_out[key] for key in variable_map]
                 )
 
         # Create a DataFrame with data rows

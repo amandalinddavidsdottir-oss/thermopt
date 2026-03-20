@@ -1,0 +1,2850 @@
+import os
+import re
+import sys
+import warnings
+import traceback
+import thermopt as th
+import matplotlib.pyplot as plt
+import pandas as pd
+from pathlib import Path
+from datetime import datetime
+
+# ---- importing post processing files:
+sys.path.insert(
+    0, str(Path(__file__).resolve().parent.parent.parent / "shared_utilities")
+)
+# sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "shared_utilities"))
+from exergy_analysis import perform_exergy_analysis, plot_heat_source_utilization
+from plot_TQ_diagram import plot_TQ_diagram
+from validation_checks import (
+    run_validation_checks,
+    get_validation_data,
+    get_turbine_data,
+    get_tq_summary_data,
+)
+
+# -----
+
+warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  CONFIGURATION
+# ══════════════════════════════════════════════════════════════════════
+#
+#  Available modes:
+#
+#  "optimize"    — Run a single YAML through the full optimizer and
+#                  post-processing pipeline (exergy, T-Q diagrams, graphs).
+#                  Use this for one-off runs or debugging a specific case.
+#                  → Set CONFIG_FILE.
+#
+#  "sweep"       — Run a fluid sweep across candidate fluids using one YAML
+#                  as a template. Fluid name is substituted for each candidate;
+#                  all other settings stay fixed. One results folder per fluid.
+#                  → Set CONFIG_FILE and SWEEP_OUTPUT_DIR.
+#
+#  "pcond_sweep" — Sweep over candidate working fluids. Each fluid is routed
+#                  to the subcritical or transcritical YAML template based on
+#                  its critical temperature. Produces three plots: combined,
+#                  subcritical-only, and transcritical-only.
+#                  → Set PCOND_CYCLE, PCOND_FLUIDS, PCOND_TCRIT_CUTOFF_K.
+#
+#  "k_sensitivity" — Sweep transcritical fluids across multiple reduced-pressure
+#                   ratios k = P_max/P_crit (e.g. 1.05, 1.10, 1.20, 1.30, 1.50).
+#                   Produces a scatter plot with one colour per k value, matching
+#                   the sensitivity analysis in ORC fluid screening literature.
+#                   → Set PCOND_CYCLE, PCOND_TC_FLUIDS, KSENS_K_VALUES.
+#
+#  "multistart"  — Latin Hypercube Sampling multistart optimisation. Generates
+#                  MULTISTART_N_SAMPLES starting points spread across the design
+#                  variable bounds, runs the optimizer from each, and saves the
+#                  best converged result as a ready-to-use YAML. Failed/infeasible
+#                  runs are logged and skipped. Use this to search for the global
+#                  optimum of a basecase YAML.
+#                  → Set MULTISTART_CONFIG, MULTISTART_N_SAMPLES,
+#                     MULTISTART_OUTPUT_DIR.
+#
+#  "parametric_study" — Nested n_stages × RPM sweep with automatic warm start
+#                  management. Outer loop = n_stages (structural change), inner
+#                  loop = RPM (simple value change). ThermOpt is instantiated
+#                  ONCE; the config dict is modified in-place via the native API.
+#                  One button press runs all 15 combinations automatically.
+#                  → Set PARAMETRIC_BASE_YAML, PARAMETRIC_N_STAGES_LIST,
+#                     PARAMETRIC_RPM_LIST, PARAMETRIC_OUTPUT_DIR.
+#
+MODE = "pcond_sweep"  # "optimize" | "sweep" | "pcond_sweep" | "k_sensitivity" | "multistart" | "parametric_study"
+
+
+# ────────────────────────────────────────── optimize & sweep ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+# Used by: optimize, sweep
+# Set this to the YAML file you want to run (optimize) or use as a
+# template with the fluid name swapped out for each candidate (sweep).
+# CONFIG_FILE = Path(__file__).with_name("case_Toluene_simpleORC_macchi_astolfi.yaml")
+# CONFIG_FILE = Path(__file__).with_name("case_Toluene_simpleORC_macchi_astolfi_n5_rpm1000.yaml")
+
+# CONFIG_FILE = Path(__file__).with_name("case_Toluene_simpleORC_macchi_astolfi_n5_rpm1500.yaml")
+# CONFIG_FILE = Path(__file__).with_name("case_Toluene_simpleORC_macchi_astolfi_n5_rpm3000.yaml")
+
+# CONFIG_FILE = Path(__file__).with_name("case_Toluene_simpleORC_macchi_astolfi_n4_rpm1000.yaml")
+# CONFIG_FILE = Path(__file__).with_name("case_Toluene_recuperatedORC_macchi_astolfi_n4_rpm1000.yaml")
+# CONFIG_FILE = Path(__file__).with_name("Toluene_DualPressureORC_basecase.yaml")
+# CONFIG_FILE = Path(__file__).with_name("Toluene_DualPressureRecuperatedORC_basecase.yaml")
+# CONFIG_FILE = Path(__file__).with_name("Cis-2-Butene_transcriticalORC_basecase.yaml")
+
+# CONFIG_FILE = Path(__file__).with_name("Toluene_dp_twosource_basecase.yaml")
+CONFIG_FILE = Path(__file__).with_name("Toluene_simple_basecase.yaml")
+
+
+# Used by: sweep
+# Folder where fluid sweep results are saved.
+SWEEP_OUTPUT_DIR = "results/fluid_sweep_BASIC_ORC"
+
+
+# ──────────────────────────────────────────── parametric_study: n_stages × RPM ──────────────────────────────────────────────────────────────────────────────────────
+#
+#  Used by: parametric_study
+#
+#  The base YAML is loaded ONCE as a Python dictionary.  The script then
+#  manages everything in-place — no per-case YAML files are needed.
+#
+#  Loop structure (Roberto's recommendation):
+#    Outer loop : n_stages  — structural change: adds/removes intermediate
+#                             pressure design variables from the dict.
+#    Inner loop : RPM       — simple value change: warm start transfers well.
+#
+#  Warm start strategy:
+#    Within RPM loop (same n_stages):
+#        Full converged x0_dict is written back into the dict value: fields
+#        before the next run.  The cycle barely changes, so convergence is fast.
+#    Across n_stages boundary:
+#        Only non-intermediate-pressure variables are carried over.
+#        New intermediate pressure variables get a first-guess from equal
+#        pressure-ratio spacing, computed from the current warm inlet/outlet
+#        pressures.
+#
+#  The base YAML should be your n=1 case (no intermediate pressures).
+#  The script adds expander_intermediate_pressure_1 ... _(n-1) as needed.
+#  n_stages and RPM are updated in the dict each run.
+
+# Single base YAML — loaded once, then modified in Python as a dictionary.
+# Use your n=1 file (no intermediate pressures yet).
+PARAMETRIC_BASE_YAML = Path(__file__).with_name(
+    "case_Toluene_simpleORC_macchi_astolfi_n1_rpm1000.yaml"
+)
+
+# n_stages outer loop — goes from 1 upward (variables are ADDED each step).
+PARAMETRIC_N_STAGES_LIST = [1, 2, 3, 4, 5]
+
+# RPM values for the inner loop.
+PARAMETRIC_RPM_LIST = [1000, 1500, 3000]
+
+# Where to save the combined CSV + Excel results.
+PARAMETRIC_OUTPUT_DIR = Path(__file__).parent / "results" / "parametric_study"
+
+# Prefix used for intermediate pressure design variable names.
+# Variables are managed as  <prefix>_1, <prefix>_2, ... automatically.
+PARAMETRIC_INTERP_PREFIX = "expander_intermediate_pressure"
+
+# Bounds written into the YAML dict when a new intermediate pressure variable
+# is created for the first time.  Set these to match the pressure range of
+# your cycle (same units as your other pressure design variables — Pa).
+PARAMETRIC_INTERP_P_MIN_EXPR = "0.9*$working_fluid.liquid_at_ambient_temperature.p"
+PARAMETRIC_INTERP_P_MAX_EXPR = "0.8*$working_fluid.critical_point.p"
+
+# Variable name in x0_dict for expander inlet/outlet pressure (used to compute
+# equal pressure-ratio spacing when a new intermediate pressure variable is
+# created). These match the design variable names in your n=1 YAML.
+PARAMETRIC_EXPANDER_INLET_P_VAR = "expander_inlet_pressure"
+PARAMETRIC_EXPANDER_OUTLET_P_VAR = "compressor_inlet_pressure"  # = p_cond
+
+
+# ──────────────────────────────────────────── pcond_sweep & k_sensitivity settings ───────────────────────────────────────────────────────────────────────────────────
+# Used by: pcond_sweep, k_sensitivity
+#
+# CYCLE TYPE — selects which pair of YAML templates to use:
+#   "simple"      — no recuperator  (Toluene_simple_basecase / Cis2Butene_tc_simple_basecase)
+#   "recuperated" — with recuperator (Toluene_recup_basecase  / Cis2Butene_tc_recup_basecase)
+PCOND_CYCLE = "simple"  # "simple" | "recuperated"
+
+# Template YAMLs — one subcritical and one transcritical per cycle topology.
+# Each fluid is automatically routed to the correct template based on T_crit.
+PCOND_SUBCRITICAL_TEMPLATES = {
+    "simple": Path(__file__).with_name("Toluene_simple_basecase.yaml"),
+    "recuperated": Path(__file__).with_name("Toluene_recup_basecase.yaml"),
+}
+PCOND_TRANSCRITICAL_TEMPLATES = {
+    "simple": Path(__file__).with_name("Cis2Butene_tc_simple_basecase.yaml"),
+    "recuperated": Path(__file__).with_name("Cis2Butene_tc_recup_basecase.yaml"),
+}
+
+# T_crit cutoff [K] for subcritical vs transcritical routing.
+# Fluids with T_crit < cutoff → transcritical template.
+# = brine inlet (207.15°C) - pinch (5K) = 202.15°C = 475.30 K
+PCOND_TCRIT_CUTOFF_K = 202.15 + 273.15  # 475.30 K
+
+# Turbine model used in the sweep.
+#   "isentropic" — uses the efficiency value already set in the YAML (no YAML patching).
+#   "astolfi"    — patches n_stages and RPM into the YAML and uses the
+#                  Macchi-Astolfi correlation; Ns-invalid results are flagged.
+PCOND_TURBINE_MODEL = "isentropic"  # "isentropic" | "astolfi"
+
+# Only used when PCOND_TURBINE_MODEL = "astolfi"
+PCOND_N_STAGES = 4
+PCOND_RPM = 1000
+
+# Folder where the pcond sweep results and plots are saved.
+PCOND_OUTPUT_DIR = Path(__file__).parent / "results" / "pcond_vs_efficiency"
+
+# ──────────────────────────────────────────── k_sensitivity settings ─────────────────────────────────────────────────────────────────────────────────────────────────
+# Used by: k_sensitivity
+# Transcritical fluids for the reduced-pressure sensitivity analysis.
+# Matches all fluids in PCOND_FLUIDS that have T_crit < PCOND_TCRIT_CUTOFF_K.
+# The code will automatically skip any fluid whose T_crit >= PCOND_TCRIT_CUTOFF_K.
+PCOND_TC_FLUIDS = {
+    # Linear alkanes (transcritical at Bjarnarflag conditions)
+    "n-Propane": "alkane",
+    "IsoButane": "alkane",
+    "n-Butane": "alkane",
+    "Neopentane": "alkane",
+    "Isopentane": "alkane",
+    "Pentane": "alkane",
+    # Alkenes
+    "1-Butene": "alkene_alkyne",
+    "IsoButene": "alkene_alkyne",
+    "trans-2-Butene": "alkene_alkyne",
+    "cis-2-Butene": "alkene_alkyne",
+    # Alcohols / ketones (low T_crit)
+    "Acetone": "alcohol_ketone",
+    "Methanol": "alcohol_ketone",
+    "Ethanol": "alcohol_ketone",
+    # Refrigerants
+    "R125": "refrigerant",
+    "R218": "refrigerant",
+    "R143a": "refrigerant",
+    "R32": "refrigerant",
+    "R1234yf": "refrigerant",
+    "R134a": "refrigerant",
+    "R227EA": "refrigerant",
+    "R161": "refrigerant",
+    "R1234zeE": "refrigerant",
+    "R152A": "refrigerant",
+    "R236FA": "refrigerant",
+    "R236EA": "refrigerant",
+    "R245fa": "refrigerant",
+    "RC318": "refrigerant",
+    "R365MFC": "refrigerant",
+    # Siloxanes (all below cutoff)
+    "MDM": "siloxane",
+    "MD2M": "siloxane",
+    "MD3M": "siloxane",
+    "MD4M": "siloxane",
+    "D4": "siloxane",
+    "D5": "siloxane",
+    "D6": "siloxane",
+    # Inorganics
+    "Ammonia": "inorganic",
+}
+
+# Reduced pressure ratios k = P_max / P_crit to sweep.
+KSENS_K_VALUES = [1.05, 1.10, 1.20, 1.30, 1.50]
+
+# Folder where k-sensitivity results and plot are saved.
+KSENS_OUTPUT_DIR = Path(__file__).parent / "results" / "k_sensitivity"
+
+# ── Fluid candidates for pcond_sweep ────────────────────────────────────────
+# Based on Tables 4.3 and 4.4 from the ORC fluid screening reference.
+# Routing to sub/transcritical template happens automatically based on T_crit.
+# T_crit cutoff = 202.15°C — fluids below go to transcritical template.
+PCOND_FLUIDS = {
+    # ── SUBCRITICAL (T_crit > 202.15°C) ─────────────────────────────────────
+    # Aromatic hydrocarbons
+    "Benzene": "aromatic",
+    "Toluene": "aromatic",
+    # Cycloalkanes
+    "CycloPentane": "cycloalkane",
+    "CycloHexane": "cycloalkane",
+    # Linear alkanes (subcritical)
+    "Isohexane": "alkane",
+    "Hexane": "alkane",
+    "Heptane": "alkane",
+    "Octane": "alkane",
+    "Nonane": "alkane",
+    "Decane": "alkane",
+    "n-Dodecane": "alkane",
+    # Siloxanes (subcritical)
+    "MM": "siloxane",
+    # ── TRANSCRITICAL (T_crit < 202.15°C) ───────────────────────────────────
+    # Linear alkanes (transcritical)
+    "n-Propane": "alkane",
+    "IsoButane": "alkane",
+    "n-Butane": "alkane",
+    "Neopentane": "alkane",
+    "Isopentane": "alkane",
+    "Pentane": "alkane",
+    # Alkenes
+    "1-Butene": "alkene_alkyne",
+    "IsoButene": "alkene_alkyne",
+    "trans-2-Butene": "alkene_alkyne",
+    "cis-2-Butene": "alkene_alkyne",
+    # Alcohols and ketones
+    "DimethylEther": "alcohol_ketone",
+    "Acetone": "alcohol_ketone",
+    "Methanol": "alcohol_ketone",
+    "Ethanol": "alcohol_ketone",
+    # Refrigerants
+    "R125": "refrigerant",
+    "R218": "refrigerant",
+    "R143a": "refrigerant",
+    "R32": "refrigerant",
+    "R1234yf": "refrigerant",
+    "R134a": "refrigerant",
+    "R227EA": "refrigerant",
+    "R161": "refrigerant",
+    "R1234zeE": "refrigerant",
+    "R152A": "refrigerant",
+    "R236FA": "refrigerant",
+    "R236EA": "refrigerant",
+    "R245fa": "refrigerant",
+    "RC318": "refrigerant",
+    "R365MFC": "refrigerant",
+    # Siloxanes (transcritical)
+    "MDM": "siloxane",
+    "MD2M": "siloxane",
+    "MD3M": "siloxane",
+    "MD4M": "siloxane",
+    "D4": "siloxane",
+    "D5": "siloxane",
+    "D6": "siloxane",
+    # Inorganics
+    "Ammonia": "inorganic",
+}
+
+# ──────────────────────────────────────────── multistart: LHS settings ──────────────────────────────────────────────────────────────────────────────────────────────
+# Used by: multistart
+# Set MULTISTART_CONFIG to the basecase YAML you want to search globally.
+# All design variable bounds (min/max) are read directly from that file —
+# no manual bound specification needed.
+MULTISTART_CONFIG = Path(__file__).with_name("Toluene_simple_basecase.yaml")
+MULTISTART_N_SAMPLES = 3  # number of LHS starting points (50–100 recommended)
+MULTISTART_OUTPUT_DIR = Path(__file__).parent / "results" / "multistart"
+
+
+# Categories match Tables 4.3 and 4.4 from the ORC fluid screening reference:
+#   Table 4.3 — Hydrocarbons:
+#     aromatic      : Aromatic Hydrocarbons
+#     cycloalkane   : Cycloalkanes
+#     alkane        : Linear Alkanes
+#     alkene_alkyne : Alkenes and Alkynes
+#     alcohol_ketone: Alcohols and Ketones  (incl. DimethylEther)
+#   Table 4.4 — Refrigerants, Siloxanes, and Inorganics:
+#     refrigerant   : Refrigerant Fluids
+#     siloxane      : Siloxanes
+#     inorganic     : Other Inorganic Fluids
+PCOND_CATEGORY_STYLE = {
+    "aromatic": {"color": "#e74c3c", "marker": "o"},  # red circles
+    "cycloalkane": {"color": "#8e44ad", "marker": "s"},  # purple squares
+    "alkane": {"color": "#2980b9", "marker": "^"},  # blue triangles
+    "alkene_alkyne": {"color": "#16a085", "marker": "P"},  # teal plus
+    "alcohol_ketone": {"color": "#c0392b", "marker": "X"},  # dark red X
+    "siloxane": {"color": "#f39c12", "marker": "D"},  # orange diamonds
+    "refrigerant": {"color": "#27ae60", "marker": "v"},  # green inv-triangles
+    "inorganic": {"color": "#7f8c8d", "marker": "*"},  # grey stars
+}
+
+# Manual label offsets (dx, dy in points) for clustered fluids
+PCOND_LABEL_OFFSETS = {
+    # Subcritical aromatics
+    "Benzene": (10, 8),
+    "Toluene": (10, 8),
+    # Subcritical cycloalkanes
+    "CycloPentane": (10, 6),
+    "CycloHexane": (-60, -6),
+    # Subcritical alkanes
+    "Isohexane": (10, -10),
+    "Hexane": (10, -10),
+    "Heptane": (10, 6),
+    "Octane": (-45, 6),
+    "Nonane": (10, 6),
+    "Decane": (10, 6),
+    "n-Dodecane": (10, 6),
+    # Subcritical siloxane
+    "MM": (10, 6),
+    # Transcritical alkanes
+    "n-Propane": (-8, -12),
+    "n-Butane": (10, 8),
+    "IsoButane": (-50, -8),
+    "Isopentane": (-55, 8),
+    "Pentane": (10, -10),
+    "Neopentane": (10, -10),
+    # Transcritical alkenes
+    "1-Butene": (10, 8),
+    "IsoButene": (10, -10),
+    "cis-2-Butene": (-70, 8),
+    "trans-2-Butene": (10, 8),
+    # Alcohols / ketones
+    "DimethylEther": (8, -10),
+    "Acetone": (10, 8),
+    "Methanol": (-50, 8),
+    "Ethanol": (10, -8),
+    # Transcritical siloxanes
+    "MDM": (10, 6),
+    "MD2M": (10, -8),
+    "MD3M": (10, 4),
+    "MD4M": (10, 4),
+    "D4": (-8, 8),
+    "D5": (10, -8),
+    "D6": (10, 4),
+    # Refrigerants
+    "R125": (8, 8),
+    "R218": (8, -10),
+    "R143a": (8, 8),
+    "R32": (8, -10),
+    "R1234yf": (8, -10),
+    "R134a": (8, 8),
+    "R227EA": (8, 6),
+    "R161": (8, -10),
+    "R1234zeE": (8, 8),
+    "R152A": (8, 8),
+    "R236FA": (-45, -8),
+    "R236EA": (8, -10),
+    "R245fa": (-60, -6),
+    "R365MFC": (8, 8),
+    # Inorganics
+    "Ammonia": (10, 8),
+}
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  HELPER: APPEND EXTRA SHEETS TO POST-PROCESSING EXCEL
+# ══════════════════════════════════════════════════════════════════════
+
+
+def _append_extra_sheets(excel_path, cycle, config_file=None):
+    """
+    Append three extra sheets to the post_processing_results.xlsx:
+      - validation_checks  : energy balance + constraint activity + phase check
+      - turbine_summary    : only written when astolfi-stacking is active
+      - TQ_summary         : heat duty, inlet/outlet temps and pinch for each HX
+    """
+    import openpyxl
+
+    validation_rows = get_validation_data(cycle, config_file=config_file)
+    turbine_rows = get_turbine_data(cycle)  # None if isentropic mode
+    tq_rows = get_tq_summary_data(cycle)
+
+    wb = openpyxl.load_workbook(excel_path)
+
+    def _safe(val):
+        """Convert any non-basic type to a plain Python type for openpyxl.
+        Handles numpy scalars, CoolProp Array types, and anything else
+        that isn't already a str/int/float/bool/None."""
+        if val is None:
+            return None
+        if isinstance(val, (str, int, float, bool)):
+            return val
+        # Try .item() first (numpy scalars)
+        if hasattr(val, "item"):
+            try:
+                return val.item()
+            except Exception:
+                pass
+        # Fall back to float conversion (CoolProp Array, etc.)
+        try:
+            return float(val)
+        except Exception:
+            pass
+        # Last resort: stringify
+        return str(val)
+
+    def _write_sheet(wb, sheet_name, rows):
+        if sheet_name in wb.sheetnames:
+            del wb[sheet_name]
+        ws = wb.create_sheet(sheet_name)
+        ws.append(["Parameter", "Value"])
+        for row in rows:
+            ws.append([_safe(v) for v in row])
+        # Auto-width columns
+        for col in ws.columns:
+            max_len = max((len(str(c.value)) for c in col if c.value), default=10)
+            ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 60)
+
+    _write_sheet(wb, "validation_checks", validation_rows)
+    if turbine_rows is not None:
+        _write_sheet(wb, "turbine_summary", turbine_rows)
+    _write_sheet(wb, "TQ_summary", tq_rows)
+
+    wb.save(excel_path)
+    print(
+        f"    ✓ Extra sheets added: validation_checks"
+        + (", turbine_summary" if turbine_rows is not None else "")
+        + ", TQ_summary"
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  MODE 1: SINGLE-FLUID OPTIMIZATION
+# ══════════════════════════════════════════════════════════════════════
+def run_optimize(config_file):
+    """Run optimization + full post-processing for a single YAML config."""
+
+    th.print_package_info()
+
+    cycle = th.ThermodynamicCycleOptimization(config_file)
+    cycle.problem.plot_cycle_realtime(config_file, update_interval=0.1)
+
+    cycle.run_optimization()
+    cycle.save_results()
+
+    # ──────────────────────── VALIDATION CHECKS ───────────────────────
+    run_validation_checks(cycle, config_file=config_file)
+
+    # ──────────────────────── MASS FLOW RATES ─────────────────────────
+    ea = cycle.problem.cycle_data["energy_analysis"]
+    print("\n" + "=" * 76)
+    print("  MASS FLOW RATES")
+    print("=" * 76)
+    if "mass_flow_heating_fluid" in ea:
+        print(
+            f"  Well (heating fluid)               :  {ea['mass_flow_heating_fluid']:.2f} kg/s"
+        )
+    elif "mass_flow_brine_hp" in ea:
+        print(
+            f"  HP brine (well 2)                  :  {ea['mass_flow_brine_hp']:.2f} kg/s"
+        )
+        print(
+            f"  LP brine (wells 1/3/4)             :  {ea['mass_flow_brine_lp']:.2f} kg/s"
+        )
+    print(
+        f"  Working fluid                      :  {ea['mass_flow_working_fluid']:.2f} kg/s"
+    )
+    print(
+        f"  Cooling fluid                      :  {ea['mass_flow_cooling_fluid']:.2f} kg/s"
+    )
+    print("=" * 76 + "\n")
+
+    # ── Post-processing ───────────────────────────────────────────
+    graph_dir = os.path.join(cycle.out_dir, "post_processing")
+    os.makedirs(graph_dir, exist_ok=True)
+
+    # Exergy analysis
+    exergy = perform_exergy_analysis(cycle, config_file=config_file)
+    exergy.print_summary()
+    pp_excel = os.path.join(graph_dir, "post_processing_results.xlsx")
+    exergy.to_excel(pp_excel)
+    _append_extra_sheets(pp_excel, cycle, config_file)
+    exergy.plot_exergy_destruction(savefig=os.path.join(graph_dir, "exergy_bar.png"))
+
+    # T-Q diagrams — topology-aware
+    components = cycle.problem.cycle_data["components"]
+    is_dual_pressure = "hp_evaporator" in components
+
+    if is_dual_pressure:
+        # Dual-pressure topology: three brine-side heat exchangers
+        plot_TQ_diagram(cycle, "hp_evaporator", output_dir=graph_dir)
+        plot_TQ_diagram(cycle, "lp_evaporator", output_dir=graph_dir)
+        plot_TQ_diagram(cycle, "preheater", output_dir=graph_dir)
+    else:
+        # Simple / recuperated topology: single heater
+        plot_TQ_diagram(cycle, "heater", output_dir=graph_dir)
+
+    plot_TQ_diagram(cycle, "cooler", output_dir=graph_dir)
+
+    # Plot recuperator T-Q diagram only if it is active (heat flow > 1 kW)
+    recup = components.get("recuperator", None)
+    if recup is not None and abs(float(recup.get("heat_flow", 0))) > 1000:
+        plot_TQ_diagram(cycle, "recuperator", output_dir=graph_dir)
+
+    # Summary
+    print("\n" + "=" * 60)
+    print("  ALL RESULTS SAVED")
+    print("=" * 60)
+    print(f"  Thermopt results : {cycle.out_dir}")
+    print(f"  Post-processing  : {graph_dir}")
+    print()
+    for f in sorted(os.listdir(graph_dir)):
+        print(f"    \u2713 {f}")
+    print("=" * 60 + "\n")
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  MODE 2: WORKING FLUID SWEEP
+# ══════════════════════════════════════════════════════════════════════
+def run_sweep(config_file, output_dir):
+    """Run fluid sweep across all candidates using config as template."""
+
+    from fluid_sweep_BASIC_ORC import (
+        get_candidate_fluids,
+        run_fluid_sweep,
+        plot_results,
+    )
+
+    candidates = get_candidate_fluids(config_file)
+    df = run_fluid_sweep(config_file, candidates, output_dir=output_dir)
+    plot_results(df, output_dir=output_dir)
+
+
+def _extract_results(cycle, config_file, n_stages, RPM):
+    """
+    Extract a fully detailed flat result dict from a converged cycle.
+
+    System level
+    ------------
+    eta_system, eta_cycle, W_net_kW, W_turbine_kW, W_pump_kW,
+    W_aux_kW, Q_in_kW, Q_available_kW, heat_utilization,
+    m_dot_wf_kg_s, m_dot_well_kg_s, m_dot_cooling_kg_s,
+    brine_exit_T_C, heat_sink_exit_T_C,
+    heater_pinch_K, cooler_pinch_K,
+    expander_p_in_bar, expander_p_out_bar,
+    expander_T_in_C, expander_T_out_C,
+    expander_h_in_kJ_kg, expander_h_out_kJ_kg,
+    compressor_p_in_bar, compressor_T_in_C,
+    Dh_is_total_kJ_kg, eta_turbine_overall,
+    SP_total, Vr_total, Ns_total,
+    SP_clamped_any, Vr_over_any, Ns_oor_any,
+    splitting_method
+
+    Per stage  (s1_*, s2_*, … up to s5_*)
+    -------------------------------------
+    s{i}_p_in_bar, s{i}_p_out_bar,
+    s{i}_T_in_C, s{i}_T_out_is_C, s{i}_T_out_real_C,
+    s{i}_h_in_kJ_kg, s{i}_h_out_is_kJ_kg, s{i}_h_out_real_kJ_kg,
+    s{i}_s_in_kJ_kgK,
+    s{i}_Dh_is_kJ_kg, s{i}_work_kJ_kg,
+    s{i}_SP, s{i}_SP_eval, s{i}_SP_clamped,
+    s{i}_Vr, s{i}_Vr_over_limit,
+    s{i}_Ns, s{i}_Ns_out_of_range,
+    s{i}_eta
+    """
+    data = cycle.problem.cycle_data
+    components = data["components"]
+    energy = data["energy_analysis"]
+    config_name = Path(config_file).stem
+
+    result = {
+        "config": config_name,
+        "n_stages": n_stages,
+        "RPM": RPM,
+        "converged": True,
+        "ns_invalid": False,
+    }
+
+    # ── System-level energy metrics ───────────────────────────────────
+    result["eta_system"] = energy.get("system_efficiency", None)
+    result["eta_cycle"] = energy.get("cycle_efficiency", None)
+    result["W_net_kW"] = energy.get("net_system_power", 0) / 1e3
+    result["W_turbine_kW"] = energy.get("expander_power", 0) / 1e3
+    result["W_pump_kW"] = energy.get("compressor_power", 0) / 1e3
+    result["W_aux_kW"] = (
+        energy.get("heat_source_pump_power", 0) + energy.get("heat_sink_pump_power", 0)
+    ) / 1e3
+    result["Q_in_kW"] = energy.get("heater_heat_flow", 0) / 1e3
+    result["Q_available_kW"] = energy.get("heater_heat_flow_max", 0) / 1e3
+    result["heat_utilization"] = (
+        result["Q_in_kW"] / result["Q_available_kW"]
+        if result["Q_available_kW"] > 0
+        else None
+    )
+    result["m_dot_wf_kg_s"] = energy.get("mass_flow_working_fluid", None)
+    result["m_dot_well_kg_s"] = energy.get("mass_flow_heating_fluid", None)
+    result["m_dot_cooling_kg_s"] = energy.get("mass_flow_cooling_fluid", None)
+
+    # ── Heat exchanger temperatures & pinch ───────────────────────────
+    heater = components.get("heater", {})
+    cooler = components.get("cooler", {})
+
+    try:
+        result["brine_exit_T_C"] = heater["hot_side"]["state_out"].T - 273.15
+    except (KeyError, AttributeError, TypeError):
+        result["brine_exit_T_C"] = None
+
+    try:
+        result["heat_sink_exit_T_C"] = cooler["cold_side"]["state_out"].T - 273.15
+    except (KeyError, AttributeError, TypeError):
+        result["heat_sink_exit_T_C"] = None
+
+    try:
+        dT_heater = heater.get("temperature_difference")
+        result["heater_pinch_K"] = float(
+            dT_heater.min() if hasattr(dT_heater, "min") else min(dT_heater)
+        )
+    except (TypeError, ValueError, AttributeError):
+        result["heater_pinch_K"] = None
+
+    try:
+        dT_cooler = cooler.get("temperature_difference")
+        result["cooler_pinch_K"] = float(
+            dT_cooler.min() if hasattr(dT_cooler, "min") else min(dT_cooler)
+        )
+    except (TypeError, ValueError, AttributeError):
+        result["cooler_pinch_K"] = None
+
+    # ── Expander inlet / outlet states ────────────────────────────────
+    exp = components.get("expander", {})
+    data_out = exp.get("data_out", {})
+
+    try:
+        result["expander_p_in_bar"] = exp["state_in"].p / 1e5
+        result["expander_T_in_C"] = exp["state_in"].T - 273.15
+        result["expander_h_in_kJ_kg"] = exp["state_in"].h / 1e3
+    except (KeyError, AttributeError):
+        result["expander_p_in_bar"] = None
+        result["expander_T_in_C"] = None
+        result["expander_h_in_kJ_kg"] = None
+
+    try:
+        result["expander_p_out_bar"] = exp["state_out"].p / 1e5
+        result["expander_T_out_C"] = exp["state_out"].T - 273.15
+        result["expander_h_out_kJ_kg"] = exp["state_out"].h / 1e3
+    except (KeyError, AttributeError):
+        result["expander_p_out_bar"] = None
+        result["expander_T_out_C"] = None
+        result["expander_h_out_kJ_kg"] = None
+
+    result["Dh_is_total_kJ_kg"] = exp.get("isentropic_work", 0) / 1e3
+    result["eta_turbine_overall"] = exp.get("efficiency", None)
+
+    # ── Overall turbine non-dimensional parameters ────────────────────
+    result["SP_total"] = data_out.get("size_parameter", None)
+    result["Vr_total"] = data_out.get("volume_ratio", None)
+    result["Ns_total"] = data_out.get("specific_speed", None)
+    result["SP_clamped_any"] = data_out.get("size_parameter_clamped", False)
+    result["Vr_over_any"] = data_out.get("volume_ratio_out_of_range", False)
+    result["Ns_oor_any"] = data_out.get("specific_speed_out_of_range", False)
+    result["splitting_method"] = data_out.get("splitting_method", "single_stage")
+
+    # ── Compressor inlet ──────────────────────────────────────────────
+    comp = components.get("compressor", {})
+    try:
+        result["compressor_p_in_bar"] = comp["state_in"].p / 1e5
+        result["compressor_T_in_C"] = comp["state_in"].T - 273.15
+    except (KeyError, AttributeError):
+        result["compressor_p_in_bar"] = None
+        result["compressor_T_in_C"] = None
+
+    # ── Per-stage detailed breakdown ──────────────────────────────────
+    stage_data = data_out.get("stage_data", [])
+    for i, s in enumerate(stage_data, 1):
+        pfx = f"s{i}_"
+
+        result[pfx + "p_in_bar"] = (
+            s["p_in"] / 1e5 if s.get("p_in") is not None else None
+        )
+        result[pfx + "p_out_bar"] = (
+            s["p_out"] / 1e5 if s.get("p_out") is not None else None
+        )
+
+        result[pfx + "T_in_C"] = (
+            s["T_in"] - 273.15 if s.get("T_in") is not None else None
+        )
+        result[pfx + "T_out_is_C"] = (
+            s["T_out_is"] - 273.15 if s.get("T_out_is") is not None else None
+        )
+        result[pfx + "T_out_real_C"] = (
+            s["T_out_real"] - 273.15 if s.get("T_out_real") is not None else None
+        )
+
+        result[pfx + "h_in_kJ_kg"] = (
+            s["h_in"] / 1e3 if s.get("h_in") is not None else None
+        )
+        result[pfx + "h_out_is_kJ_kg"] = (
+            s["h_out_is"] / 1e3 if s.get("h_out_is") is not None else None
+        )
+        result[pfx + "h_out_real_kJ_kg"] = (
+            s["h_out_real"] / 1e3 if s.get("h_out_real") is not None else None
+        )
+
+        result[pfx + "s_in_kJ_kgK"] = (
+            s["s_in"] / 1e3 if s.get("s_in") is not None else None
+        )
+
+        result[pfx + "Dh_is_kJ_kg"] = (
+            s["Dh_is"] / 1e3 if s.get("Dh_is") is not None else None
+        )
+        result[pfx + "work_kJ_kg"] = (
+            s["work"] / 1e3 if s.get("work") is not None else None
+        )
+
+        result[pfx + "SP"] = s.get("SP")
+        result[pfx + "SP_eval"] = s.get("SP_eval")
+        result[pfx + "SP_clamped"] = s.get("SP_clamped", False)
+
+        result[pfx + "Vr"] = s.get("Vr")
+        result[pfx + "Vr_over_limit"] = s.get("Vr_over_limit", False)
+
+        result[pfx + "Ns"] = s.get("Ns")
+        result[pfx + "Ns_out_of_range"] = s.get("Ns_out_of_range", False)
+
+        result[pfx + "eta"] = s.get("eta_stage")
+
+    # ── List-form stage arrays ──
+    result["Ns_out_of_range"] = data_out.get("specific_speed_out_of_range", False)
+    result["stage_Ns"] = [s.get("Ns") for s in stage_data]
+    result["stage_Ns_flags"] = [s.get("Ns_out_of_range", False) for s in stage_data]
+    result["stage_Vr"] = [s.get("Vr") for s in stage_data]
+    result["stage_eta"] = [s.get("eta_stage") for s in stage_data]
+    result["stage_SP"] = [s.get("SP") for s in stage_data]
+    result["stage_Dh_is_kJ_kg"] = [
+        s["Dh_is"] / 1e3 if s.get("Dh_is") is not None else None for s in stage_data
+    ]
+    result["stage_p_in_bar"] = [
+        s["p_in"] / 1e5 if s.get("p_in") is not None else None for s in stage_data
+    ]
+    result["stage_p_out_bar"] = [
+        s["p_out"] / 1e5 if s.get("p_out") is not None else None for s in stage_data
+    ]
+
+    # ── Recuperator (if present) ──────────────────────────────────────
+    if "recuperator" in components:
+        result["Q_recuperator_kW"] = energy.get("recuperator_heat_flow", 0) / 1e3
+
+    return result
+
+
+def _check_ns_validity(result):
+    """
+    Check whether any stage had Ns outside [0.045, 0.20].
+
+    Uses the specific_speed_out_of_range flag set by the Astolfi component,
+    which is True if ANY single stage exceeded the regression bounds.
+    Drills into per-stage data to report exactly which stages were invalid.
+
+    Returns a human-readable problem string, or None if everything is valid.
+    """
+    problems = []
+
+    # Detect which expanders are present
+    expanders = []
+    if "Ns_out_of_range" in result:
+        expanders.append(("", "expander"))
+    for prefix in ["HP", "LP"]:
+        if f"{prefix}_Ns_out_of_range" in result:
+            expanders.append((f"{prefix}_", prefix))
+
+    for key_prefix, label in expanders:
+        if not result.get(f"{key_prefix}Ns_out_of_range", False):
+            continue  # all stages valid for this expander
+
+        # Identify which specific stages were out of range
+        stage_ns = result.get(f"{key_prefix}stage_Ns", [])
+        stage_flags = result.get(f"{key_prefix}stage_Ns_flags", [])
+
+        bad_stages = []
+        for i, (ns, flag) in enumerate(zip(stage_ns, stage_flags)):
+            if flag:
+                ns_str = f"{ns:.3f}" if ns is not None else "?"
+                bad_stages.append(f"stage {i+1} (Ns={ns_str})")
+
+        if bad_stages:
+            problems.append(f"{label}: {', '.join(bad_stages)}")
+        else:
+            # Top-level flag set but no stage detail available
+            problems.append(f"{label}: Ns out of range (no stage detail available)")
+
+    return "; ".join(problems) if problems else None
+
+
+def _run_single(config_file, n_stages, RPM):
+    """Run one optimization for a specific YAML (already correct for n_stages) at a given RPM.
+    Only RPM is patched — the YAML structure (intermediate pressures, constraints) is preserved.
+    """
+    yaml_text = Path(config_file).read_text()
+    yaml_text = re.sub(r"(RPM:\s*)\d+", rf"\g<1>{RPM}", yaml_text)
+
+    config_dir = Path(config_file).parent
+    tmp_path = config_dir / f"_tmp_run_n{n_stages}_rpm{RPM}.yaml"
+
+    try:
+        tmp_path.write_text(yaml_text)
+
+        cycle = th.ThermodynamicCycleOptimization(str(tmp_path))
+        cycle.run_optimization()
+
+        # Check convergence — read the flag ThermOpt/pysolver_view actually set
+        converged = False
+        try:
+            converged = bool(cycle.solver.success)
+        except AttributeError:
+            pass
+
+        result = _extract_results(cycle, config_file, n_stages, RPM)
+        result["converged"] = converged
+        return result
+
+    except Exception as e:
+        print(f"    ✗ FAILED: {e}")
+        traceback.print_exc()
+        return {
+            "config": Path(config_file).stem,
+            "n_stages": n_stages,
+            "RPM": RPM,
+            "converged": False,
+            "error": str(e),
+        }
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+def _compute_fluid_warmstart(
+    fluid_name,
+    T_cond_K=308.15,
+    T_evap_K=443.15,
+    superheating_K=10.0,
+    subcooling_K=2.0,
+    W_net_target=45e6,
+    eta_turbine=0.90,
+    transcritical=False,
+    k=1.20,
+):
+    """
+    Compute physically sensible initial guess values for a given fluid
+    using CoolProp, so the pcond_sweep optimizer starts from a feasible
+    point regardless of which fluid is being run.
+
+    The key variable is expander_mass_flow_rate — it is calibrated for
+    Toluene in the template YAML (287 kg/s) and will be completely wrong
+    for other fluids, causing the 45 MW power constraint to start with
+    a huge infeasibility that the optimizer cannot recover from.
+
+    Returns a dict of {design_variable_name: float} ready to patch into
+    the YAML value: fields. Returns None if CoolProp fails, in which case
+    the caller uses the YAML defaults unchanged.
+
+    Parameters
+    ----------
+    T_cond_K      : condensing temperature [K]  — default 35°C (sink + 13K margin)
+    T_evap_K      : evaporation temperature [K] — default 170°C (well below brine pinch)
+    superheating_K: superheat above sat. vapour at p_evap
+    subcooling_K  : subcooling below sat. liquid at p_cond
+    W_net_target  : target net power [W] used to estimate mass flow
+    eta_turbine   : isentropic efficiency used in mass flow estimate
+    """
+    try:
+        import CoolProp.CoolProp as CP
+
+        T_crit = CP.PropsSI("TCRIT", "", 0, "", 0, fluid_name)
+        p_crit = CP.PropsSI("PCRIT", "", 0, "", 0, fluid_name)
+
+        # ── Condensing pressure ───────────────────────────────────────
+        # Clamp to 95% of critical if fluid is supercritical at T_cond
+        T_cond_use = min(T_cond_K, T_crit * 0.95)
+        p_cond = CP.PropsSI("P", "T", T_cond_use, "Q", 0, fluid_name)
+        p_cond = min(p_cond, 0.95 * p_crit)
+
+        # ── Evaporation pressure ──────────────────────────────────────
+        if transcritical:
+            # Transcritical: p_evap = k * p_crit (supercritical high side)
+            p_evap = k * p_crit
+        else:
+            # Subcritical: saturation pressure at T_evap_K, clamped below critical
+            T_evap_use = min(T_evap_K, T_crit * 0.90)
+            p_evap = CP.PropsSI("P", "T", T_evap_use, "Q", 1, fluid_name)
+            p_evap = min(p_evap, 0.80 * p_crit)
+
+        # Ensure a meaningful pressure ratio
+        if p_evap <= p_cond * 2.0:
+            p_evap = p_cond * 4.0
+
+        # ── Compressor inlet: subcooled liquid ────────────────────────
+        T_sat_cond = CP.PropsSI("T", "P", p_cond, "Q", 0, fluid_name)
+        T_comp_in = T_sat_cond - subcooling_K
+        h_comp_in = CP.PropsSI("H", "T", T_comp_in, "P", p_cond, fluid_name)
+
+        # ── Expander inlet ────────────────────────────────────────────
+        if transcritical:
+            # Supercritical: no saturation curve — set T = T_crit + 30K at p_evap
+            T_exp_in = T_crit + 30.0
+            h_exp_in = CP.PropsSI("H", "T", T_exp_in, "P", p_evap, fluid_name)
+        else:
+            # Subcritical: superheated vapour above saturation temperature
+            T_sat_evap = CP.PropsSI("T", "P", p_evap, "Q", 1, fluid_name)
+            T_exp_in = T_sat_evap + superheating_K
+            h_exp_in = CP.PropsSI("H", "T", T_exp_in, "P", p_evap, fluid_name)
+
+        # ── Expander mass flow: calibrated to hit W_net_target ────────
+        # Approximate isentropic enthalpy drop across the turbine
+        s_exp_in = CP.PropsSI("S", "T", T_exp_in, "P", p_evap, fluid_name)
+        h_exp_out_is = CP.PropsSI("H", "P", p_cond, "S", s_exp_in, fluid_name)
+        dh_is = h_exp_in - h_exp_out_is
+        dh_actual = eta_turbine * dh_is
+
+        if dh_actual > 0:
+            m_dot = W_net_target / dh_actual
+            m_dot = max(25.0, min(m_dot, 1400.0))
+        else:
+            m_dot = 300.0  # fallback
+
+        ws = {
+            "compressor_inlet_pressure": p_cond,
+            "compressor_inlet_enthalpy": h_comp_in,
+            "expander_inlet_pressure": p_evap,
+            "expander_inlet_enthalpy": h_exp_in,
+            "expander_mass_flow_rate": m_dot,
+        }
+
+        print(
+            f"\n    warm-start ({'TC' if transcritical else 'SC'}, k={k:.2f}): "
+            f"p_cond={p_cond/1e5:.4f} bar, "
+            f"p_evap={p_evap/1e5:.2f} bar, "
+            f"m_dot={m_dot:.1f} kg/s  "
+            f"(dh_is={dh_is/1e3:.1f} kJ/kg)"
+        )
+        return ws
+
+    except Exception as e:
+        print(
+            f"\n    (warm-start estimation failed for {fluid_name}: {e} — using YAML defaults)"
+        )
+        return None
+
+
+def _patch_warmstart(text, ws):
+    """
+    Replace the value: fields of the given design variables in the YAML
+    text with plain float values from ws dict.
+
+    Works line-by-line: finds the variable block by name, then replaces
+    only the first "value:" line inside that block with the new number.
+    This approach is more robust than regex for YAML with expression-based
+    bounds like "0.172758*$working_fluid.critical_point.p".
+    """
+    lines = text.splitlines(keepends=True)
+    result = []
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+
+        # Check if this line is the start of a design variable we want to patch
+        matched_var = None
+        for var in ws:
+            # Match "    var_name:" at the start of the line (with any indentation)
+            stripped = line.lstrip()
+            if stripped.startswith(var + ":") and stripped == stripped.lstrip():
+                # Make sure it's at design_variable indentation level (4 spaces)
+                indent = len(line) - len(line.lstrip())
+                if indent >= 2:
+                    matched_var = var
+                    break
+
+        if matched_var is not None:
+            # Emit the variable name line unchanged
+            result.append(line)
+            i += 1
+            # Now scan forward and replace the first "value:" line in this block
+            var_indent = len(line) - len(line.lstrip())
+            patched = False
+            while i < len(lines):
+                sub_line = lines[i]
+                sub_stripped = sub_line.lstrip()
+                sub_indent = len(sub_line) - len(sub_line.lstrip())
+
+                # Stop if we have left this variable block (same or lower indent,
+                # non-empty line that is not a child key)
+                if (
+                    sub_indent <= var_indent
+                    and sub_stripped
+                    and not sub_stripped.startswith("#")
+                ):
+                    break
+
+                if not patched and sub_stripped.startswith("value:"):
+                    # Replace value line with plain float
+                    leading = sub_line[:sub_indent]
+                    result.append(f"{leading}value: {ws[matched_var]:.6g}\n")
+                    patched = True
+                else:
+                    result.append(sub_line)
+                i += 1
+        else:
+            result.append(line)
+            i += 1
+
+    return "".join(result)
+
+
+#  MODE 3b: PARAMETRIC STUDY — n_stages × RPM  (native thermopt API)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def _build_ordering_constraints(n_stages, prefix, normalize=True):
+    """
+    Return the list of pressure ordering constraint dicts for n_stages.
+
+    For n=1: empty list (no intermediate pressures).
+    For n=2: two constraints  p_in > p1 > p_out
+    For n=3: three constraints p_in > p1 > p2 > p_out
+    ... and so on.
+
+    The pattern from the YAML is:
+      $components.expander.state_in.p / $variables.<prefix>_1           > 1
+      $variables.<prefix>_{i} / $variables.<prefix>_{i+1}               > 1  (middle)
+      $variables.<prefix>_{n-1} / $components.expander.state_out.p      > 1
+    """
+    constraints = []
+    n = n_stages - 1  # number of intermediate pressures
+
+    if n <= 0:
+        return constraints
+
+    for i in range(1, n + 2):  # i = 1 … n+1  (edges of the chain)
+        if i == 1:
+            lhs = "$components.expander.state_in.p"
+            rhs = f"$variables.{prefix}_1"
+        elif i == n + 1:
+            lhs = f"$variables.{prefix}_{n}"
+            rhs = "$components.expander.state_out.p"
+        else:
+            lhs = f"$variables.{prefix}_{i-1}"
+            rhs = f"$variables.{prefix}_{i}"
+
+        constraints.append(
+            {
+                "variable": f"{lhs} / {rhs}",
+                "type": ">",
+                "value": 1.0,
+                "normalize": normalize,
+            }
+        )
+
+    return constraints
+
+
+def _is_ordering_constraint(c, prefix):
+    """Return True if constraint c is an intermediate pressure ordering constraint."""
+    v = c.get("variable", "")
+    return (
+        f"$variables.{prefix}_" in v
+        or ("$components.expander.state_in.p" in v and f"$variables.{prefix}_" in v)
+        or (f"$variables.{prefix}_" in v and "$components.expander.state_out.p" in v)
+    )
+
+
+def run_parametric_nstages_rpm(
+    base_yaml,
+    n_stages_list,
+    rpm_list,
+    output_dir,
+    interp_var_prefix="expander_intermediate_pressure",
+    interp_p_min_expr="0.9*$working_fluid.liquid_at_ambient_temperature.p",
+    interp_p_max_expr="0.8*$working_fluid.critical_point.p",
+    expander_inlet_p_var="expander_inlet_pressure",
+    expander_outlet_p_var="compressor_inlet_pressure",
+    rpm_config_path="problem_formulation.fixed_parameters.expander.RPM",
+    n_stages_config_path="problem_formulation.fixed_parameters.expander.n_stages",
+):
+    """
+    Nested parametric sweep over turbine stage count and shaft speed,
+    using thermopt's native Python API — no temp YAML files.
+
+    ThermodynamicCycleOptimization is instantiated ONCE from the base YAML.
+    The live cycle.config dict is then modified in-place via the native API,
+    and cycle.load_config() rebuilds the problem and solver each time the
+    structure changes.
+
+    Native thermopt methods used
+    ----------------------------
+    cycle.load_config(cycle.config)
+        Rebuilds problem + solver from the current dict state.
+    cycle.set_config_value(path, value, reload=True/False)
+        Updates a single nested value by dot-separated path.
+    cycle.set_constraint(variable, type, value)
+        Adds or updates a named constraint.
+    cycle.problem.x0_dict
+        Converged variable values after run_optimization().
+
+    Loop structure
+    --------------
+    Outer loop : n_stages
+        Structural changes managed here:
+        1. Add/remove intermediate pressure design variables from
+           cycle.config["problem_formulation"]["design_variables"].
+        2. Rebuild the ordering constraints (p_in > p1 > p2 > p_out)
+           to match the new stage count — old ones removed, new ones added.
+        3. cycle.load_config() to rebuild problem + solver.
+        4. Apply cycle-level warm starts from the previous n_stages.
+
+    Inner loop : RPM
+        cycle.set_config_value(rpm_config_path, rpm) — triggers one reload.
+        Converged x0_dict written back as warm starts before the next run.
+
+    What does NOT change with n_stages
+    -----------------------------------
+    The array-level Vr and Ns constraints in the YAML
+    ($components.expander.data_out.stage_Vr and stage_Ns) automatically
+    apply to however many stages are present — they do not need to be
+    added or removed.  Only the ordering constraints between intermediate
+    pressures change.
+
+    Warm start strategy
+    -------------------
+    Within RPM loop  : full x0_dict carried forward.
+    Across n_stages  : cycle-level vars (non-intermediate-pressure) carried
+                       forward.  New intermediate pressure vars get an
+                       equal-pressure-ratio initial guess from the current
+                       warm inlet/outlet pressures.
+    On failure       : warm_vars unchanged — next run starts from last GOOD
+                       solution.
+    """
+
+    base_yaml = Path(base_yaml)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    total = len(n_stages_list) * len(rpm_list)
+    run_n = 0
+
+    print("=" * 76)
+    print("  PARAMETRIC STUDY — n_stages × RPM  (native thermopt API)")
+    print("=" * 76)
+    print(f"  Base YAML     : {base_yaml.name}")
+    print(f"  n_stages      : {n_stages_list}")
+    print(f"  RPM           : {rpm_list}")
+    print(f"  Total runs    : {total}")
+    print(f"  Output        : {output_dir}")
+    print()
+    print("  Warm start strategy:")
+    print("    RPM loop     : full x0_dict written back via set_config_value()")
+    print(f"    n_stages loop: cycle vars carried; '{interp_var_prefix}_*' recomputed")
+    print("  Constraints managed automatically:")
+    print("    Ordering (p_in > p1 > ... > p_out): rebuilt each n_stages step")
+    print("    Vr/Ns array constraints: unchanged (apply to whole stage array)")
+    print("=" * 76 + "\n")
+
+    # ── Instantiate once — only file read in the entire sweep ────────
+    cycle = th.ThermodynamicCycleOptimization(str(base_yaml))
+    dvars = cycle.config["problem_formulation"]["design_variables"]
+
+    results = []
+    warm_vars = {}  # {var_name: float} — updated after every converged run
+    transition_vars = (
+        {}
+    )  # warm_vars saved from the first RPM run of each n_stages block
+    # Used for the n_stages boundary transition — avoids carrying
+    # over a degenerate high-RPM solution into the next stage count
+
+    # ══════════════════════════════════════════════════════════════════
+    # OUTER LOOP — n_stages
+    # ══════════════════════════════════════════════════════════════════
+    for n_stages in n_stages_list:
+
+        print(f"\n{'─'*76}")
+        print(f"  n_stages = {n_stages}")
+        print(f"{'─'*76}")
+
+        n_needed = max(0, n_stages - 1)
+
+        # ── 1. Sync intermediate pressure design variables ─────────────
+        existing = sorted(
+            [k for k in dvars if k.startswith(interp_var_prefix + "_")],
+            key=lambda k: int(k.rsplit("_", 1)[-1]),
+        )
+
+        # Remove variables (stepping to fewer stages)
+        while len(existing) > n_needed:
+            var_name = existing.pop()
+            del dvars[var_name]
+            print(f"    - removed design var  {var_name}")
+
+        # Add variables (stepping to more stages)
+        for i in range(len(existing) + 1, n_needed + 1):
+            var_name = f"{interp_var_prefix}_{i}"
+            # Bounds: copy from last existing variable, else use defaults
+            if existing:
+                prev = dvars[existing[-1]]
+                bmin = prev["min"]
+                bmax = prev["max"]
+            else:
+                bmin = interp_p_min_expr
+                bmax = interp_p_max_expr
+            # Temporary placeholder — will be overwritten by equal-ratio pass below
+            dvars[var_name] = {"value": 1e5, "min": bmin, "max": bmax}
+            existing.append(var_name)
+            print(f"    + added design var  {var_name}")
+
+        # Recompute ALL intermediate pressure values from equal pressure-ratio
+        # spacing using transition_vars (first RPM of previous n_stages block).
+        # This is done for every variable — both newly added ones AND any that
+        # carried over from the previous stage count — so that the full set is
+        # always internally consistent and guaranteed ordered p_in > p1 > ... > p_out.
+        source = transition_vars if transition_vars else warm_vars
+        p_in = source.get(expander_inlet_p_var)
+        p_out = source.get(expander_outlet_p_var)
+        if p_in is None or p_out is None or not (p_in > p_out > 0):
+            p_in = warm_vars.get(expander_inlet_p_var, 3e6)
+            p_out = warm_vars.get(expander_outlet_p_var, 0.1e5)
+
+        for idx, var_name in enumerate(existing, 1):
+            # Equal geometric spacing: p_i = p_in * (p_out/p_in)^(i/n_stages)
+            p_guess = float(p_in * (p_out / p_in) ** (idx / n_stages))
+            dvars[var_name]["value"] = p_guess
+            print(
+                f"    ↺ set {var_name} = {p_guess:.4e} Pa  " f"({p_guess/1e5:.4f} bar)"
+            )
+
+        # ── 2. Rebuild ordering constraints ───────────────────────────
+        # Remove all existing ordering constraints, then add the correct
+        # set for the current n_stages.
+        all_constraints = cycle.config["problem_formulation"].get("constraints", [])
+
+        # Keep everything that is NOT an ordering constraint
+        non_ordering = [
+            c
+            for c in all_constraints
+            if not _is_ordering_constraint(c, interp_var_prefix)
+        ]
+
+        # Build the correct ordering constraints for this n_stages
+        new_ordering = _build_ordering_constraints(
+            n_stages, interp_var_prefix, normalize=True
+        )
+
+        cycle.config["problem_formulation"]["constraints"] = non_ordering + new_ordering
+
+        n_ord = len(new_ordering)
+        if n_ord:
+            print(
+                f"    Ordering constraints: {n_ord} "
+                f"(p_in > p1 {'> ... ' if n_stages > 2 else ''}> p_out)"
+            )
+        else:
+            print(f"    Ordering constraints: none (n_stages=1)")
+
+        # ── 3. Update n_stages in fixed parameters ─────────────────────
+        cycle.set_config_value(n_stages_config_path, n_stages, reload=False)
+
+        # ── 4. Apply cycle-level warm starts (skip intermediate pressures)
+        #       Use transition_vars (from first RPM of previous n_stages block)
+        #       so the n_stages boundary always starts from the least
+        #       Ns-constrained solution, not a potentially degenerate high-RPM one.
+        source_vars = transition_vars if transition_vars else warm_vars
+        n_carried = 0
+        for k, v in source_vars.items():
+            if k.startswith(interp_var_prefix + "_"):
+                continue
+            if k in dvars:
+                cycle.set_config_value(
+                    f"problem_formulation.design_variables.{k}.value",
+                    float(v),
+                    reload=False,
+                )
+                n_carried += 1
+        if n_carried:
+            src_label = (
+                "transition_vars (first RPM)" if transition_vars else "warm_vars"
+            )
+            print(
+                f"    Cycle-level warm start: {n_carried} vars carried over "
+                f"(source: {src_label})"
+            )
+
+        # ── 5. Rebuild problem + solver with updated dict ──────────────
+        cycle.load_config(cycle.config)
+
+        # ══════════════════════════════════════════════════════════════
+        # INNER LOOP — RPM
+        # ══════════════════════════════════════════════════════════════
+        for rpm in rpm_list:
+            run_n += 1
+            print(
+                f"\n  [{run_n:>2}/{total}] n_stages={n_stages}, RPM={rpm:>5} ... ",
+                end="",
+                flush=True,
+            )
+
+            # 6. Update RPM — triggers a reload internally
+            cycle.set_config_value(rpm_config_path, rpm)
+
+            # 7. Run optimizer
+            try:
+                cycle.run_optimization()
+
+                # 8. Check convergence
+                converged = False
+                try:
+                    converged = bool(cycle.solver.success)
+                except AttributeError:
+                    pass
+
+                # 9. Converged → read x0_dict and write back as warm starts
+                #    Not converged → leave warm_vars unchanged (start from
+                #    last good solution next time)
+                if converged:
+                    warm_vars = {k: float(v) for k, v in cycle.problem.x0_dict.items()}
+                    # Save transition_vars from the first RPM run of each n_stages
+                    # block. This is the least Ns-constrained solution and gives the
+                    # best thermodynamic starting point for the next stage count.
+                    if rpm == rpm_list[0]:
+                        transition_vars = dict(warm_vars)
+                    # Write warm start values into the dict without reloading —
+                    # the next iteration's set_config_value(rpm_config_path, rpm)
+                    # will trigger the single reload we need.
+                    for k, v in warm_vars.items():
+                        if k in dvars:
+                            cycle.set_config_value(
+                                f"problem_formulation.design_variables.{k}.value",
+                                v,
+                                reload=False,
+                            )
+
+                # 10. Extract and store results
+                result = _extract_results(cycle, base_yaml, n_stages, rpm)
+                result["converged"] = converged
+
+                if converged:
+                    ns_problem = _check_ns_validity(result)
+                    if ns_problem:
+                        result["ns_invalid"] = True
+                        result["skip_reason"] = f"Ns out of range: {ns_problem}"
+                        eta = result.get("eta_system", 0) or 0
+                        W = result.get("W_net_kW", 0) or 0
+                        print(
+                            f"⚠  η_sys={eta*100:.2f}%  W={W:.0f} kW  "
+                            f"[Ns OOR: {ns_problem}]"
+                        )
+                    else:
+                        result["ns_invalid"] = False
+                        eta = result.get("eta_system", 0) or 0
+                        W = result.get("W_net_kW", 0) or 0
+                        print(f"✓  η_sys={eta*100:.2f}%  W={W:.0f} kW")
+                else:
+                    result["ns_invalid"] = False
+                    print("✗  did not converge  (warm start unchanged)")
+
+            except Exception as e:
+                print(f"✗  FAILED: {e}")
+                traceback.print_exc()
+                result = {
+                    "config": base_yaml.stem,
+                    "n_stages": n_stages,
+                    "RPM": rpm,
+                    "converged": False,
+                    "ns_invalid": False,
+                    "error": str(e),
+                }
+
+            results.append(result)
+
+    # ── Save combined results ─────────────────────────────────────────
+    df = (
+        pd.DataFrame(results)
+        .sort_values(["n_stages", "RPM"], ascending=True, na_position="last")
+        .reset_index(drop=True)
+    )
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    csv_path = output_dir / f"parametric_nstages_rpm_{timestamp}.csv"
+    xlsx_path = output_dir / f"parametric_nstages_rpm_{timestamp}.xlsx"
+
+    df.to_csv(csv_path, index=False)
+    df.to_excel(xlsx_path, index=False, sheet_name="Results")
+
+    # ── Print summary ─────────────────────────────────────────────────
+    print("\n\n" + "=" * 76)
+    print("  PARAMETRIC STUDY — RESULTS SUMMARY")
+    print("=" * 76)
+
+    display_cols = ["n_stages", "RPM", "converged", "ns_invalid"]
+    for col in ["eta_system", "eta_turbine", "W_net_kW", "Vr", "Ns", "skip_reason"]:
+        if col in df.columns:
+            display_cols.append(col)
+
+    print(df[display_cols].to_string(index=False))
+
+    n_ok = int(df["converged"].sum())
+    n_bad = total - n_ok
+    print(f"\n  Converged : {n_ok}/{total}   |   Failed : {n_bad}")
+    print(f"\n  Results saved to:")
+    print(f"    CSV  : {csv_path}")
+    print(f"    Excel: {xlsx_path}")
+    print("=" * 76 + "\n")
+
+    return df
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  MODE 4: CONDENSATION PRESSURE vs EFFICIENCY — THERMOPT FLUID SWEEP
+# ══════════════════════════════════════════════════════════════════════
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  HELPERS: FLUID-SPECIFIC WARM START FOR PCOND SWEEP
+# ══════════════════════════════════════════════════════════════════════
+
+
+def _compute_fluid_warmstart(
+    fluid_name,
+    T_cond_K=308.15,
+    T_evap_K=443.15,
+    superheating_K=10.0,
+    subcooling_K=2.0,
+    W_net_target=45e6,
+    eta_turbine=0.90,
+    eta_pump=0.85,
+    transcritical=False,
+    k=1.20,
+):
+    """
+    Compute physically sensible initial guess values for a given fluid
+    using CoolProp, so the pcond_sweep optimizer starts from a feasible
+    point regardless of which fluid is being run.
+
+    The key variable is expander_mass_flow_rate — it is calibrated for
+    Toluene in the template YAML (287 kg/s) and will be completely wrong
+    for other fluids, causing the 45 MW power constraint to start with
+    a huge infeasibility that the optimizer cannot recover from.
+
+    Returns a tuple (ws, summary_str) where:
+      ws          : dict of {design_variable_name: float} ready to patch into
+                    the YAML value: fields.
+      summary_str : a single-line string for the caller to print — no leading
+                    newline, so it does not break end="" console output.
+    Returns (None, error_str) if CoolProp fails, in which case the caller
+    uses the YAML defaults unchanged.
+
+    Notes on mass flow estimation
+    ------------------------------
+    The mass flow is estimated from W_net_target / dh_net where dh_net is the
+    net specific work per unit mass of working fluid:
+
+        dh_net = eta_turbine * dh_is_turbine  -  dh_pump / eta_pump
+
+    The pump specific work is estimated from the incompressible formula:
+        dh_pump = v_liq * (p_evap - p_cond)
+
+    where v_liq is the specific volume of the subcooled liquid at the
+    compressor inlet. This correction is significant for light refrigerants
+    (10–20% of gross turbine power) and negligible for heavy fluids like
+    Toluene or siloxanes. Omitting it causes systematic underestimation of
+    mass flow for refrigerants, which starts the 45 MW equality constraint
+    with a large infeasibility the optimizer may not recover from.
+
+    Other notes
+    -----------
+    - Transcritical expander inlet uses T_crit + 50 K (not 30 K) to stay
+      clear of the high-property-gradient region near the critical point
+      that can cause CoolProp instability.
+    - recuperator_effectiveness is included for recuperated cycle YAMLs.
+      It is silently skipped by _patch_warmstart for simple YAMLs.
+
+    Parameters
+    ----------
+    T_cond_K      : condensing temperature [K]  — default 35°C (sink + 13K margin)
+    T_evap_K      : evaporation temperature [K] — default 170°C (well below brine pinch)
+    superheating_K: superheat above sat. vapour at p_evap
+    subcooling_K  : subcooling below sat. liquid at p_cond
+    W_net_target  : target net power [W] used to estimate mass flow
+    eta_turbine   : isentropic efficiency of the expander
+    eta_pump      : isentropic efficiency of the working-fluid pump (compressor)
+    """
+    try:
+        import CoolProp.CoolProp as CP
+
+        T_crit = CP.PropsSI("TCRIT", "", 0, "", 0, fluid_name)
+        p_crit = CP.PropsSI("PCRIT", "", 0, "", 0, fluid_name)
+
+        # ── Condensing pressure ───────────────────────────────────────
+        # Clamp to 95% of critical if fluid is supercritical at T_cond
+        T_cond_use = min(T_cond_K, T_crit * 0.95)
+        p_cond = CP.PropsSI("P", "T", T_cond_use, "Q", 0, fluid_name)
+        p_cond = min(p_cond, 0.95 * p_crit)
+
+        # ── Evaporation pressure ──────────────────────────────────────
+        if transcritical:
+            # Transcritical: p_evap = k * p_crit (supercritical high side)
+            p_evap = k * p_crit
+        else:
+            # Subcritical: saturation pressure at T_evap_K, clamped below critical
+            T_evap_use = min(T_evap_K, T_crit * 0.90)
+            p_evap = CP.PropsSI("P", "T", T_evap_use, "Q", 1, fluid_name)
+            p_evap = min(p_evap, 0.80 * p_crit)
+
+        # Ensure a meaningful pressure ratio
+        if p_evap <= p_cond * 2.0:
+            p_evap = p_cond * 4.0
+
+        # ── Compressor inlet: subcooled liquid ────────────────────────
+        T_sat_cond = CP.PropsSI("T", "P", p_cond, "Q", 0, fluid_name)
+        T_comp_in = T_sat_cond - subcooling_K
+        h_comp_in = CP.PropsSI("H", "T", T_comp_in, "P", p_cond, fluid_name)
+
+        # ── Expander inlet ────────────────────────────────────────────
+        if transcritical:
+            # Supercritical: no saturation curve — use T_crit + 50 K to stay
+            # well clear of the high-property-gradient region near the critical
+            # point, which can cause CoolProp instability at T_crit + 30 K.
+            T_exp_in = T_crit + 50.0
+            h_exp_in = CP.PropsSI("H", "T", T_exp_in, "P", p_evap, fluid_name)
+        else:
+            # Subcritical: superheated vapour above saturation temperature
+            T_sat_evap = CP.PropsSI("T", "P", p_evap, "Q", 1, fluid_name)
+            T_exp_in = T_sat_evap + superheating_K
+            h_exp_in = CP.PropsSI("H", "T", T_exp_in, "P", p_evap, fluid_name)
+
+        # ── Turbine specific work ─────────────────────────────────────
+        s_exp_in = CP.PropsSI("S", "T", T_exp_in, "P", p_evap, fluid_name)
+        h_exp_out_is = CP.PropsSI("H", "P", p_cond, "S", s_exp_in, fluid_name)
+        dh_is = h_exp_in - h_exp_out_is  # isentropic turbine work [J/kg]
+        dh_turbine = eta_turbine * dh_is  # actual turbine work [J/kg]
+
+        # ── Pump specific work (incompressible approximation) ─────────
+        # v_liq * (p_evap - p_cond) is the isentropic pump work.
+        # Dividing by eta_pump gives the actual shaft work consumed.
+        # This correction matters most for light refrigerants where pump
+        # work is 10–20% of gross turbine output.
+        v_liq = 1.0 / CP.PropsSI("D", "T", T_comp_in, "P", p_cond, fluid_name)
+        dh_pump = v_liq * (p_evap - p_cond) / eta_pump  # actual pump work [J/kg]
+
+        # ── Net specific work and mass flow ───────────────────────────
+        dh_net = dh_turbine - dh_pump
+        if dh_net > 0:
+            m_dot = W_net_target / dh_net
+            m_dot = max(25.0, min(m_dot, 1400.0))
+        else:
+            m_dot = 300.0  # fallback: pressure ratio too low for net positive work
+
+        # ── Build warm-start dict ─────────────────────────────────────
+        ws = {
+            "compressor_inlet_pressure": p_cond,
+            "compressor_inlet_enthalpy": h_comp_in,
+            "expander_inlet_pressure": p_evap,
+            "expander_inlet_enthalpy": h_exp_in,
+            "expander_mass_flow_rate": m_dot,
+            # Recuperated cycle only — silently skipped for simple YAMLs.
+            # 0.60 is a conservative mid-range guess within [0, 0.95].
+            "recuperator_effectiveness": 0.60,
+        }
+
+        pump_frac = dh_pump / dh_turbine * 100 if dh_turbine > 0 else 0.0
+        summary = (
+            f"warm-start ({'TC' if transcritical else 'SC'}, k={k:.2f}): "
+            f"p_cond={p_cond/1e5:.3f} bar, p_evap={p_evap/1e5:.2f} bar, "
+            f"m_dot={m_dot:.1f} kg/s  "
+            f"(dh_is={dh_is/1e3:.1f} kJ/kg, pump={pump_frac:.1f}% of turbine)"
+        )
+        return ws, summary
+
+    except Exception as e:
+        return None, f"warm-start failed ({e}) — using YAML defaults"
+
+
+def _patch_warmstart(text, ws):
+    """
+    Replace the value: fields of the given design variables in the YAML
+    text with plain float values from ws dict.
+
+    Works line-by-line: finds the variable block by name, then replaces
+    only the first "value:" line inside that block with the new number.
+    This approach is more robust than regex for YAML with expression-based
+    bounds like "0.172758*$working_fluid.critical_point.p".
+
+    Returns (patched_text, matched, skipped) where:
+      matched : list of variable names that were successfully patched.
+      skipped : list of variable names from ws that were NOT found in the
+                YAML. The caller decides whether a skip is expected (e.g.
+                recuperator_effectiveness absent in a simple YAML) or a
+                real problem such as a typo in a variable name.
+    """
+    lines = text.splitlines(keepends=True)
+    result = []
+    matched = []
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+
+        # Check if this line is the start of a design variable we want to patch
+        matched_var = None
+        for var in ws:
+            stripped = line.lstrip()
+            if stripped.startswith(var + ":") and stripped == stripped.lstrip():
+                indent = len(line) - len(line.lstrip())
+                if indent >= 2:
+                    matched_var = var
+                    break
+
+        if matched_var is not None:
+            result.append(line)
+            i += 1
+            var_indent = len(line) - len(line.lstrip())
+            patched = False
+            while i < len(lines):
+                sub_line = lines[i]
+                sub_stripped = sub_line.lstrip()
+                sub_indent = len(sub_line) - len(sub_line.lstrip())
+
+                # Stop if we have left this variable block (same or lower indent,
+                # non-empty line that is not a child key)
+                if (
+                    sub_indent <= var_indent
+                    and sub_stripped
+                    and not sub_stripped.startswith("#")
+                ):
+                    break
+
+                if not patched and sub_stripped.startswith("value:"):
+                    leading = sub_line[:sub_indent]
+                    result.append(f"{leading}value: {ws[matched_var]:.6g}\n")
+                    patched = True
+                else:
+                    result.append(sub_line)
+                i += 1
+
+            if patched:
+                matched.append(matched_var)
+        else:
+            result.append(line)
+            i += 1
+
+    skipped = [v for v in ws if v not in matched]
+    return "".join(result), matched, skipped
+
+
+def run_pcond_sweep(
+    subcritical_yaml,
+    transcritical_yaml,
+    fluids,
+    output_dir,
+    tcrit_cutoff_K=475.30,
+    cycle_label="simple",
+    turbine_model="isentropic",
+    n_stages=4,
+    RPM=1000,
+):
+    """
+    For each candidate fluid, automatically route to the subcritical or
+    transcritical YAML template based on the fluid's T_crit vs tcrit_cutoff_K,
+    then run a full ThermOpt optimization.
+
+    Produces three plots: combined, subcritical-only, transcritical-only.
+    """
+    import CoolProp.CoolProp as _CP
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Pre-classify all fluids by T_crit
+    subcritical_fluids = {}
+    transcritical_fluids = {}
+    for fname, cat in fluids.items():
+        try:
+            T_crit = _CP.PropsSI("TCRIT", "", 0, "", 0, fname)
+            if T_crit < tcrit_cutoff_K:
+                transcritical_fluids[fname] = cat
+            else:
+                subcritical_fluids[fname] = cat
+        except Exception:
+            subcritical_fluids[fname] = cat  # default to subcritical if unknown
+
+    print("=" * 70)
+    print("  CONDENSATION PRESSURE vs EFFICIENCY — ThermOpt Fluid Sweep")
+    print("=" * 70)
+    print(f"  Cycle         : {cycle_label}")
+    print(
+        f"  Subcritical   : {Path(subcritical_yaml).name}  ({len(subcritical_fluids)} fluids)"
+    )
+    print(
+        f"  Transcritical : {Path(transcritical_yaml).name}  ({len(transcritical_fluids)} fluids)"
+    )
+    print(f"  T_crit cutoff : {tcrit_cutoff_K - 273.15:.2f}°C")
+    if turbine_model == "astolfi":
+        print(f"  Turbine model : Macchi-Astolfi  (n_stages={n_stages}, RPM={RPM})")
+    else:
+        print(f"  Turbine model : isentropic efficiency (from YAML)")
+    print(f"  Total fluids  : {len(fluids)}")
+    print("=" * 70 + "\n")
+
+    results = []
+
+    for i, (fluid_name, category) in enumerate(fluids.items(), 1):
+        is_transcritical = fluid_name in transcritical_fluids
+        template_yaml = transcritical_yaml if is_transcritical else subcritical_yaml
+        cycle_type = "transcritical" if is_transcritical else "subcritical"
+
+        print(
+            f"  [{i:>2}/{len(fluids)}] {fluid_name:<18} [{cycle_type}] ... ",
+            end="",
+            flush=True,
+        )
+
+        tmp_yaml = None
+        row = {
+            "fluid": fluid_name,
+            "category": category,
+            "cycle_type": cycle_type,
+            "converged": False,
+            "ns_invalid": False,
+            "skip_reason": None,
+        }
+        try:
+            text = Path(template_yaml).read_text()
+            text = re.sub(
+                r"(working_fluid:.*?\n\s+name:\s*)[^\n]+",
+                lambda m: m.group(1) + fluid_name,
+                text,
+                count=1,
+                flags=re.DOTALL,
+            )
+            ws, ws_summary = _compute_fluid_warmstart(
+                fluid_name, transcritical=is_transcritical
+            )
+            print(f"    {ws_summary}")
+            if ws is not None:
+                text, _matched, _skipped = _patch_warmstart(text, ws)
+            if turbine_model == "astolfi":
+                text = re.sub(r"(n_stages:\s*)\d+", rf"\g<1>{n_stages}", text)
+                text = re.sub(r"(RPM:\s*)\d+", rf"\g<1>{RPM}", text)
+
+            tmp_yaml = Path(template_yaml).parent / f"_tmp_pcond_{fluid_name}.yaml"
+            tmp_yaml.write_text(text)
+
+            cycle = th.ThermodynamicCycleOptimization(str(tmp_yaml))
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore")
+                cycle.run_optimization()
+
+            converged = False
+            for attr in [
+                lambda: cycle.solver.success,
+                lambda: cycle.solver.result.success,
+                lambda: cycle.solver.solver_result.success,
+            ]:
+                try:
+                    converged = attr()
+                    break
+                except AttributeError:
+                    continue
+
+            if not converged:
+                row["skip_reason"] = "optimizer did not converge"
+                print("✗  did not converge")
+                results.append(row)
+                continue
+
+            data = cycle.problem.cycle_data
+            energy = data["energy_analysis"]
+            components = data["components"]
+            exp = components["expander"]
+            data_out = exp.get("data_out", {})
+
+            row.update(
+                {
+                    "converged": True,
+                    "eta_system": energy.get("system_efficiency"),
+                    "eta_cycle": energy.get("cycle_efficiency"),
+                    "p_cond_bar": exp["state_out"].p / 1e5,
+                    "p_evap_bar": exp["state_in"].p / 1e5,
+                    "W_net_kW": energy.get("net_system_power", 0) / 1e3,
+                    "eta_turbine": exp.get("efficiency"),
+                    "m_wf_kg_s": energy.get("mass_flow_working_fluid"),
+                    "m_well_kg_s": energy.get("mass_flow_heating_fluid"),
+                }
+            )
+
+            if turbine_model == "astolfi":
+                row.update(
+                    {
+                        "SP": data_out.get("size_parameter"),
+                        "SP_clamped": data_out.get("size_parameter_clamped", False),
+                        "Vr": data_out.get("volume_ratio"),
+                        "Ns": data_out.get("specific_speed"),
+                    }
+                )
+                if data_out.get("specific_speed_out_of_range", False):
+                    row["ns_invalid"] = True
+                    row["skip_reason"] = "Ns out of range"
+                    print(
+                        f"⚠  Ns OOR — η_sys={row['eta_system']*100:.2f}%  "
+                        f"p_cond={row['p_cond_bar']:.3f} bar"
+                    )
+                else:
+                    print(
+                        f"✓  η_sys={row['eta_system']*100:.2f}%  "
+                        f"p_cond={row['p_cond_bar']:.3f} bar  "
+                        f"η_turb={row['eta_turbine']:.3f}"
+                    )
+            else:
+                print(
+                    f"✓  η_sys={row['eta_system']*100:.2f}%  "
+                    f"p_cond={row['p_cond_bar']:.3f} bar  "
+                    f"η_turb={row['eta_turbine']:.3f}"
+                )
+
+        except Exception as e:
+            row["skip_reason"] = str(e)
+            print(f"✗  {e}")
+            traceback.print_exc()
+        finally:
+            if tmp_yaml is not None and tmp_yaml.exists():
+                tmp_yaml.unlink()
+
+        results.append(row)
+
+    # ── Save results ──────────────────────────────────────────────────
+    df = (
+        pd.DataFrame(results)
+        .sort_values("eta_system", ascending=False, na_position="last")
+        .reset_index(drop=True)
+    )
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    turb_tag = (
+        "isentropic"
+        if turbine_model == "isentropic"
+        else f"astolfi_n{n_stages}_rpm{RPM}"
+    )
+    tag = f"{cycle_label}_{turb_tag}"
+    xlsx_path = output_dir / f"pcond_vs_efficiency_{tag}_{timestamp}.xlsx"
+    df.to_excel(xlsx_path, index=False)
+    print(f"\n  Saved data  : {xlsx_path}")
+
+    # ── Plots ─────────────────────────────────────────────────────────
+    valid = [r for r in results if r["converged"] and not r.get("ns_invalid", False)]
+    flagged = [r for r in results if r["converged"] and r.get("ns_invalid", False)]
+
+    if not valid and not flagged:
+        print("  No converged results to plot.")
+        return df
+
+    # Combined plot
+    p1 = _plot_pcond_efficiency(valid, flagged, output_dir, tag, subset="all")
+    # Subcritical-only plot
+    sub_v = [r for r in valid if r.get("cycle_type") != "transcritical"]
+    sub_f = [r for r in flagged if r.get("cycle_type") != "transcritical"]
+    p2 = _plot_pcond_efficiency(
+        sub_v, sub_f, output_dir, f"{tag}_subcritical", subset="subcritical"
+    )
+    # Transcritical-only plot
+    tc_v = [r for r in valid if r.get("cycle_type") == "transcritical"]
+    tc_f = [r for r in flagged if r.get("cycle_type") == "transcritical"]
+    p3 = _plot_pcond_efficiency(
+        tc_v, tc_f, output_dir, f"{tag}_transcritical", subset="transcritical"
+    )
+
+    print(f"  Saved plots : {p1.name}  |  {p2.name}  |  {p3.name}")
+
+    n_ok = len(valid)
+    n_ns = len(flagged)
+    n_bad = sum(1 for r in results if not r["converged"])
+    print(f"\n  Summary: {n_ok} converged | {n_ns} Ns-invalid | {n_bad} failed")
+    print("=" * 70 + "\n")
+
+    return df
+
+
+def _plot_pcond_efficiency(valid, flagged, output_dir, tag, subset="all"):
+    """
+    Thesis-quality scatter plot: condensing pressure vs system efficiency.
+
+    subset : "all"          — combined plot, subcritical by family + transcritical teal
+             "subcritical"  — subcritical fluids only, coloured by family
+             "transcritical"— transcritical fluids only, coloured by family
+    """
+    import matplotlib.ticker as ticker
+
+    if not valid and not flagged:
+        return Path(output_dir) / f"pcond_vs_efficiency_{tag}.png"  # nothing to plot
+
+    plt.rcParams.update(
+        {
+            "font.family": "serif",
+            "font.size": 11,
+            "axes.labelsize": 12,
+            "legend.fontsize": 10,
+            "xtick.labelsize": 10,
+            "ytick.labelsize": 10,
+            "axes.linewidth": 0.8,
+        }
+    )
+
+    fig, ax = plt.subplots(figsize=(13, 7))
+
+    all_results = valid + flagged
+
+    if subset == "transcritical":
+        # All transcritical fluids coloured by family with teal base
+        tc_tol = [r for r in valid if r["fluid"] == "Cis-2-Butene"]
+        tc_rest = [r for r in valid if r["fluid"] != "Cis-2-Butene"]
+        for cat, style in PCOND_CATEGORY_STYLE.items():
+            cat_r = [r for r in tc_rest if r["category"] == cat]
+            if not cat_r:
+                continue
+            ax.scatter(
+                [r["p_cond_bar"] for r in cat_r],
+                [r["eta_system"] * 100 for r in cat_r],
+                color="#17a589",
+                marker=style["marker"],
+                s=90,
+                edgecolors="k",
+                linewidth=0.4,
+                label=cat.capitalize(),
+                zorder=3,
+            )
+        if tc_tol:
+            r = tc_tol[0]
+            ax.scatter(
+                r["p_cond_bar"],
+                r["eta_system"] * 100,
+                color="#17a589",
+                marker="o",
+                s=180,
+                edgecolors="k",
+                linewidth=1.5,
+                zorder=5,
+                label="Cis-2-Butene (reference TC)",
+            )
+
+    else:
+        # Subcritical fluids coloured by family
+        sub_valid = [r for r in valid if r.get("cycle_type") != "transcritical"]
+        toluene = [r for r in sub_valid if r["fluid"] == "Toluene"]
+        sub_rest = [r for r in sub_valid if r["fluid"] != "Toluene"]
+
+        for cat, style in PCOND_CATEGORY_STYLE.items():
+            cat_r = [r for r in sub_rest if r["category"] == cat]
+            if not cat_r:
+                continue
+            label = (
+                f"Subcritical — {cat.capitalize()}"
+                if subset == "all"
+                else cat.capitalize()
+            )
+            ax.scatter(
+                [r["p_cond_bar"] for r in cat_r],
+                [r["eta_system"] * 100 for r in cat_r],
+                color=style["color"],
+                marker=style["marker"],
+                s=90,
+                edgecolors="k",
+                linewidth=0.4,
+                label=label,
+                zorder=3,
+            )
+
+        if toluene:
+            r = toluene[0]
+            ax.scatter(
+                r["p_cond_bar"],
+                r["eta_system"] * 100,
+                color=PCOND_CATEGORY_STYLE["aromatic"]["color"],
+                marker=PCOND_CATEGORY_STYLE["aromatic"]["marker"],
+                s=180,
+                edgecolors="k",
+                linewidth=1.5,
+                zorder=5,
+                label="Toluene (reference)",
+            )
+
+        if subset == "all":
+            # Also draw transcritical in teal
+            tc_valid = [r for r in valid if r.get("cycle_type") == "transcritical"]
+            tc_plotted = False
+            for cat, style in PCOND_CATEGORY_STYLE.items():
+                cat_r = [r for r in tc_valid if r["category"] == cat]
+                if not cat_r:
+                    continue
+                label = "Transcritical" if not tc_plotted else "_nolegend_"
+                tc_plotted = True
+                ax.scatter(
+                    [r["p_cond_bar"] for r in cat_r],
+                    [r["eta_system"] * 100 for r in cat_r],
+                    color="#17a589",
+                    marker=style["marker"],
+                    s=90,
+                    edgecolors="k",
+                    linewidth=0.4,
+                    label=label,
+                    zorder=3,
+                )
+
+    # Ns-invalid hollow markers (Astolfi mode only)
+    if flagged:
+        ax.scatter(
+            [r["p_cond_bar"] for r in flagged],
+            [r["eta_system"] * 100 for r in flagged],
+            facecolors="none",
+            edgecolors="#aaaaaa",
+            marker="o",
+            s=70,
+            linewidth=0.8,
+            label=r"$N_s$ out of range",
+            zorder=2,
+        )
+
+    ax.set_xscale("log")
+
+    # Fluid name labels
+    for r in all_results:
+        x, y = r["p_cond_bar"], r["eta_system"] * 100
+        dx, dy = PCOND_LABEL_OFFSETS.get(r["fluid"], (7, 5))
+        use_arrow = abs(dx) > 15 or abs(dy) > 12
+        weight = "bold" if r["fluid"] in ("Toluene", "Cis-2-Butene") else "normal"
+        ax.annotate(
+            r["fluid"],
+            (x, y),
+            textcoords="offset points",
+            xytext=(dx, dy),
+            fontsize=8,
+            fontweight=weight,
+            ha="left" if dx >= 0 else "right",
+            color="#222222",
+            arrowprops=(
+                dict(arrowstyle="-", color="#aaaaaa", lw=0.5, shrinkA=0, shrinkB=2)
+                if use_arrow
+                else None
+            ),
+        )
+
+    # 1 atm reference line
+    ax.axvline(
+        x=1.01325, color="#888888", linestyle="--", linewidth=0.8, alpha=0.8, zorder=1
+    )
+    y_top = ax.get_ylim()[1]
+    ax.text(
+        1.01325 * 1.04,
+        y_top * 0.98,
+        "1 atm",
+        fontsize=8,
+        color="#888888",
+        va="top",
+        ha="left",
+        style="italic",
+    )
+
+    ax.set_xlabel("Condensing Pressure [bar]")
+    ax.set_ylabel(r"System Efficiency $\eta_{sys}$ [%]")
+    ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{x:g}"))
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.yaxis.grid(True, linestyle="--", linewidth=0.5, alpha=0.4, color="grey")
+    ax.set_axisbelow(True)
+    ax.legend(
+        loc="upper left",
+        bbox_to_anchor=(1.01, 1.0),
+        frameon=True,
+        framealpha=0.95,
+        edgecolor="#cccccc",
+        borderpad=0.8,
+    )
+
+    fig.tight_layout()
+    fig.subplots_adjust(right=0.82)
+
+    plot_path = Path(output_dir) / f"pcond_vs_efficiency_{tag}.png"
+    fig.savefig(plot_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    plt.rcParams.update(plt.rcParamsDefault)
+    return plot_path
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  MODE 6: k-SENSITIVITY — REDUCED PRESSURE SWEEP (TRANSCRITICAL)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def run_k_sensitivity(
+    transcritical_yaml,
+    tc_fluids,
+    k_values,
+    output_dir,
+    cycle_label="simple",
+    turbine_model="isentropic",
+    n_stages=4,
+    RPM=1000,
+):
+    """
+    For each transcritical fluid, sweep over reduced-pressure ratios
+    k = P_max / P_crit and record the cycle efficiency. This tells you
+    how sensitive the transcritical ORC performance is to the choice of
+    maximum operating pressure.
+
+    For each (fluid, k) combination:
+      - p_evap is patched to k * p_crit in the YAML
+      - All other settings (heat source, sink, constraints) stay fixed
+    """
+    import CoolProp.CoolProp as _CP
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    print("=" * 70)
+    print("  k-SENSITIVITY — TRANSCRITICAL REDUCED PRESSURE SWEEP")
+    print("=" * 70)
+    print(f"  Cycle         : {cycle_label}")
+    print(f"  Template YAML : {Path(transcritical_yaml).name}")
+    print(f"  k values      : {k_values}")
+    print(f"  Fluids        : {len(tc_fluids)}")
+    print(f"  Total runs    : {len(tc_fluids) * len(k_values)}")
+    print("=" * 70 + "\n")
+
+    results = []
+    total = len(tc_fluids) * len(k_values)
+    run_n = 0
+
+    for fluid_name, category in tc_fluids.items():
+        try:
+            T_crit = _CP.PropsSI("TCRIT", "", 0, "", 0, fluid_name)
+            p_crit = _CP.PropsSI("PCRIT", "", 0, "", 0, fluid_name)
+        except Exception as e:
+            print(f"  ✗ {fluid_name}: CoolProp failed — {e}")
+            continue
+
+        for k in k_values:
+            run_n += 1
+            p_evap_target = k * p_crit
+            print(
+                f"  [{run_n:>3}/{total}] {fluid_name:<18} k={k:.2f}  "
+                f"(p_evap={p_evap_target/1e5:.2f} bar) ... ",
+                end="",
+                flush=True,
+            )
+
+            row = {
+                "fluid": fluid_name,
+                "category": category,
+                "k": k,
+                "p_evap_target_bar": p_evap_target / 1e5,
+                "T_crit_C": round(T_crit - 273.15, 1),
+                "converged": False,
+                "skip_reason": None,
+            }
+            tmp_yaml = None
+            try:
+                text = Path(transcritical_yaml).read_text()
+                # Swap fluid name
+                text = re.sub(
+                    r"(working_fluid:.*?\n\s+name:\s*)[^\n]+",
+                    lambda m: m.group(1) + fluid_name,
+                    text,
+                    count=1,
+                    flags=re.DOTALL,
+                )
+                # Apply fluid-specific warm start with this k value
+                ws, ws_summary = _compute_fluid_warmstart(
+                    fluid_name, transcritical=True, k=k
+                )
+                print(f"    {ws_summary}")
+                if ws is not None:
+                    text, _matched, _skipped = _patch_warmstart(text, ws)
+
+                if turbine_model == "astolfi":
+                    text = re.sub(r"(n_stages:\s*)\d+", rf"\g<1>{n_stages}", text)
+                    text = re.sub(r"(RPM:\s*)\d+", rf"\g<1>{RPM}", text)
+
+                tmp_yaml = (
+                    Path(transcritical_yaml).parent
+                    / f"_tmp_ksens_{fluid_name}_k{k:.2f}.yaml"
+                )
+                tmp_yaml.write_text(text)
+
+                cycle = th.ThermodynamicCycleOptimization(str(tmp_yaml))
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore")
+                    cycle.run_optimization()
+
+                converged = False
+                for attr in [
+                    lambda: cycle.solver.success,
+                    lambda: cycle.solver.result.success,
+                    lambda: cycle.solver.solver_result.success,
+                ]:
+                    try:
+                        converged = attr()
+                        break
+                    except AttributeError:
+                        continue
+
+                if not converged:
+                    row["skip_reason"] = "did not converge"
+                    print("✗  did not converge")
+                    results.append(row)
+                    continue
+
+                data = cycle.problem.cycle_data
+                energy = data["energy_analysis"]
+                exp = data["components"]["expander"]
+
+                row.update(
+                    {
+                        "converged": True,
+                        "eta_system": energy.get("system_efficiency"),
+                        "eta_cycle": energy.get("cycle_efficiency"),
+                        "p_cond_bar": exp["state_out"].p / 1e5,
+                        "p_evap_bar": exp["state_in"].p / 1e5,
+                        "W_net_kW": energy.get("net_system_power", 0) / 1e3,
+                        "eta_turbine": exp.get("efficiency"),
+                        "m_wf_kg_s": energy.get("mass_flow_working_fluid"),
+                    }
+                )
+
+                print(
+                    f"✓  η_sys={row['eta_system']*100:.2f}%  "
+                    f"p_cond={row['p_cond_bar']:.3f} bar  "
+                    f"p_evap={row['p_evap_bar']:.2f} bar"
+                )
+
+            except Exception as e:
+                row["skip_reason"] = str(e)
+                print(f"✗  {e}")
+                traceback.print_exc()
+            finally:
+                if tmp_yaml is not None and tmp_yaml.exists():
+                    tmp_yaml.unlink()
+
+            results.append(row)
+
+    # ── Save results ──────────────────────────────────────────────────
+    df = (
+        pd.DataFrame(results)
+        .sort_values(["k", "eta_system"], ascending=[True, False], na_position="last")
+        .reset_index(drop=True)
+    )
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    tag = f"{cycle_label}_k_sensitivity"
+    xlsx_path = output_dir / f"{tag}_{timestamp}.xlsx"
+    df.to_excel(xlsx_path, index=False)
+    print(f"\n  Saved data : {xlsx_path}")
+
+    # ── Plot ──────────────────────────────────────────────────────────
+    valid = [r for r in results if r["converged"]]
+    if not valid:
+        print("  No converged results to plot.")
+        return df
+
+    plot_path = _plot_k_sensitivity(valid, k_values, output_dir, tag)
+    print(f"  Saved plot : {plot_path}")
+
+    n_ok = sum(1 for r in results if r["converged"])
+    n_bad = len(results) - n_ok
+    print(
+        f"\n  Summary: {n_ok} converged | {n_bad} failed  "
+        f"({len(tc_fluids)} fluids × {len(k_values)} k values)"
+    )
+    print("=" * 70 + "\n")
+    return df
+
+
+def _plot_k_sensitivity(results, k_values, output_dir, tag):
+    """
+    Scatter plot: condensing pressure vs cycle efficiency, one colour per k value.
+    Matches the style of the ORC fluid screening sensitivity analysis.
+    """
+    import matplotlib.ticker as ticker
+    import matplotlib.cm as cm
+    import numpy as np
+
+    plt.rcParams.update(
+        {
+            "font.family": "serif",
+            "font.size": 11,
+            "axes.labelsize": 12,
+            "legend.fontsize": 10,
+            "xtick.labelsize": 10,
+            "ytick.labelsize": 10,
+            "axes.linewidth": 0.8,
+        }
+    )
+
+    fig, ax = plt.subplots(figsize=(13, 7))
+
+    # Colour map: one colour per k value (viridis, dark to light)
+    colours = cm.viridis(np.linspace(0.1, 0.9, len(k_values)))
+    k_colour = {k: colours[i] for i, k in enumerate(k_values)}
+
+    # Track which fluids have been labelled (for first-k label placement)
+    labelled_fluids = set()
+
+    for k in k_values:
+        k_results = [r for r in results if r["k"] == k and r["converged"]]
+        if not k_results:
+            continue
+        ax.scatter(
+            [r["p_cond_bar"] for r in k_results],
+            [r["eta_system"] * 100 for r in k_results],
+            color=k_colour[k],
+            marker="o",
+            s=70,
+            edgecolors="k",
+            linewidth=0.3,
+            label=f"k = {k:.2f}",
+            zorder=3,
+        )
+
+    # Label each fluid once (at the first k value where it appears)
+    for r in sorted(results, key=lambda x: x["k"]):
+        if not r["converged"]:
+            continue
+        if r["fluid"] not in labelled_fluids:
+            labelled_fluids.add(r["fluid"])
+            x, y = r["p_cond_bar"], r["eta_system"] * 100
+            dx, dy = PCOND_LABEL_OFFSETS.get(r["fluid"], (7, 5))
+            use_arrow = abs(dx) > 15 or abs(dy) > 12
+            ax.annotate(
+                r["fluid"],
+                (x, y),
+                textcoords="offset points",
+                xytext=(dx, dy),
+                fontsize=8,
+                ha="left" if dx >= 0 else "right",
+                color="#222222",
+                arrowprops=(
+                    dict(arrowstyle="-", color="#aaaaaa", lw=0.5, shrinkA=0, shrinkB=2)
+                    if use_arrow
+                    else None
+                ),
+            )
+
+    ax.set_xscale("log")
+    ax.axvline(
+        x=1.01325, color="#888888", linestyle="--", linewidth=0.8, alpha=0.8, zorder=1
+    )
+    ax.text(
+        1.01325 * 1.04,
+        ax.get_ylim()[1] * 0.98,
+        "1 atm",
+        fontsize=8,
+        color="#888888",
+        va="top",
+        ha="left",
+        style="italic",
+    )
+
+    ax.set_xlabel(r"Condensing Pressure $p_{\mathrm{cond}}$ [bar]")
+    ax.set_ylabel(r"System Efficiency $\eta_{sys}$ [%]")
+    ax.set_title(r"Sensitivity to Reduced Pressure $k = P_{\max}/P_c$", pad=8)
+    ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{x:g}"))
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.yaxis.grid(True, linestyle="--", linewidth=0.5, alpha=0.4, color="grey")
+    ax.set_axisbelow(True)
+    ax.legend(
+        loc="upper left",
+        bbox_to_anchor=(1.01, 1.0),
+        frameon=True,
+        framealpha=0.95,
+        edgecolor="#cccccc",
+        borderpad=0.8,
+    )
+
+    fig.tight_layout()
+    fig.subplots_adjust(right=0.82)
+
+    plot_path = Path(output_dir) / f"{tag}.png"
+    fig.savefig(plot_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    plt.rcParams.update(plt.rcParamsDefault)
+    return plot_path
+
+
+def run_multistart(config_file, n_samples, output_dir):
+    """
+    Latin Hypercube Sampling multistart optimisation.
+
+    Generates n_samples starting points distributed evenly across the full
+    design variable space using LHS (one sample per interval per variable),
+    runs the optimizer from each point, logs and skips failures, and saves:
+      - A CSV + Excel summary of every run (eta, W_net, convergence flag).
+      - best_lhs_start_*.yaml  — the LHS starting point that led to the best
+        result. Re-running this in "optimize" mode will reproduce the result.
+      - optimized_*.yaml       — the converged solution with value: fields set
+        to the actual optimized variable values. Use this as a warm start for
+        future runs; the optimizer begins right at the optimum.
+
+    Dependencies: scipy (>=1.7 for scipy.stats.qmc), ruamel.yaml
+    """
+    from scipy.stats.qmc import LatinHypercube
+    from ruamel.yaml import YAML
+    import shutil
+
+    config_file = Path(config_file)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Parse YAML — extract design variable names and bounds ──────────
+    ryaml = YAML()
+    ryaml.preserve_quotes = True
+    with open(config_file) as f:
+        base_config = ryaml.load(f)
+
+    dvars = base_config["problem_formulation"]["design_variables"]
+    var_names = list(dvars.keys())
+    n_vars = len(var_names)
+
+    print("=" * 70)
+    print("  MULTISTART OPTIMISATION — Latin Hypercube Sampling")
+    print("=" * 70)
+    print(f"  Config    : {config_file.name}")
+    print(f"  Variables : {n_vars}")
+    print(f"  Samples   : {n_samples}")
+    print(f"  Output    : {output_dir}")
+    print("=" * 70)
+    print()
+    print("  Design variable bounds:")
+    for name in var_names:
+        vd = dvars[name]
+        print(f"    {name:<48}  min={vd['min']}  max={vd['max']}")
+    print()
+
+    # ── Generate LHS samples in [0, 1]^n_vars ─────────────────────────
+    # seed=42 makes the sample set reproducible across runs.
+    sampler = LatinHypercube(d=n_vars, seed=42)
+    lhs_samples = sampler.random(n=n_samples)  # shape: (n_samples, n_vars)
+
+    # ── Optimise from each LHS starting point ─────────────────────────
+    results = []
+    best_eta = -1.0
+    best_run_idx = None
+    best_tmp_path = None  # path to the temp YAML of the best run
+    best_cycle = None  # cycle object for the best run (kept for optimized YAML)
+
+    import time
+
+    for i, sample in enumerate(lhs_samples):
+        run_label = f"[{i+1:>3}/{n_samples}]"
+        print(f"  {run_label} ", end="", flush=True)
+
+        tmp_path = config_file.parent / f"_tmp_multistart_{i:04d}.yaml"
+        row = {
+            "run": i + 1,
+            "converged": False,
+            "eta_system": None,
+            "W_net_kW": None,
+            "error": None,
+            "t_elapsed_s": None,
+            "n_iterations": None,
+            "n_func_evals": None,
+            "infeasibility": None,
+            "exit_message": None,
+        }
+
+        try:
+            # ── Patch value: for every design variable ─────────────────
+            # Re-load the config each iteration to get a fresh ruamel tree.
+            with open(config_file) as f:
+                cfg = ryaml.load(f)
+
+            dv = cfg["problem_formulation"]["design_variables"]
+
+            for j, var_name in enumerate(var_names):
+                t = float(sample[j])  # LHS sample in [0, 1]
+                vd = dv[var_name]
+                vmin = vd["min"]
+                vmax = vd["max"]
+
+                if isinstance(vmin, (int, float)) and isinstance(vmax, (int, float)):
+                    # Numeric bounds — compute value directly as a float
+                    vd["value"] = float(vmin) + t * (float(vmax) - float(vmin))
+                else:
+                    # Expression-based bounds (e.g. "0.05*$working_fluid.critical_point.p")
+                    # Write as a linear combination that thermopt can evaluate.
+                    t1 = round(1.0 - t, 8)
+                    t2 = round(t, 8)
+                    vd["value"] = f"({t1})*({vmin}) + ({t2})*({vmax})"
+
+                # Store the t-value in the result row for reference
+                row[f"t_{var_name}"] = round(t, 6)
+
+            with open(tmp_path, "w") as f:
+                ryaml.dump(cfg, f)
+
+            # ── Run optimiser ──────────────────────────────────────────
+            t_start = time.perf_counter()
+            cycle = th.ThermodynamicCycleOptimization(str(tmp_path))
+            cycle.run_optimization()
+            t_elapsed = time.perf_counter() - t_start
+            row["t_elapsed_s"] = round(t_elapsed, 1)
+
+            # ── Solver diagnostics ─────────────────────────────────────
+            try:
+                row["n_iterations"] = int(cycle.solver.nit)
+            except AttributeError:
+                pass
+            try:
+                row["n_func_evals"] = int(cycle.solver.nfev)
+            except AttributeError:
+                pass
+            try:
+                row["infeasibility"] = float(cycle.solver.infeasibility)
+            except AttributeError:
+                pass
+            try:
+                row["exit_message"] = str(cycle.solver.message)
+            except AttributeError:
+                pass
+
+            # Convergence check (mirrors _run_single / run_pcond_sweep)
+            converged = False
+            try:
+                converged = bool(cycle.solver.success)
+            except AttributeError:
+                pass
+
+            if not converged:
+                print(f"✗  did not converge  ({t_elapsed:.0f}s)")
+                row["error"] = "optimizer did not converge"
+                results.append(row)
+                continue
+
+            # ── Extract key metrics ────────────────────────────────────
+            ea = cycle.problem.cycle_data["energy_analysis"]
+            eta = ea.get("system_efficiency", 0) or 0
+            W_net = ea.get("net_system_power", 0) / 1e3
+
+            row["converged"] = True
+            row["eta_system"] = round(eta, 8)
+            row["W_net_kW"] = round(W_net, 2)
+
+            # ── Thermodynamic outputs ──────────────────────────────────
+            # Brine exit temperature(s)
+            if "brine_exit_temperature" in ea:
+                row["brine_exit_T_K"] = round(ea["brine_exit_temperature"], 2)
+            elif "hp_brine_exit_temperature" in ea:
+                row["hp_brine_exit_T_K"] = round(ea["hp_brine_exit_temperature"], 2)
+                row["lp_brine_exit_T_K"] = round(ea["lp_brine_exit_temperature"], 2)
+
+            # Mass flows
+            if "mass_flow_heating_fluid" in ea:
+                row["m_brine_kgs"] = round(ea["mass_flow_heating_fluid"], 2)
+            elif "mass_flow_brine_hp" in ea:
+                row["m_brine_hp_kgs"] = round(ea["mass_flow_brine_hp"], 2)
+                row["m_brine_lp_kgs"] = round(ea["mass_flow_brine_lp"], 2)
+            row["m_working_fluid_kgs"] = round(ea.get("mass_flow_working_fluid", 0), 2)
+
+            # Expander inlet conditions (LP expander = main expander in dual pressure)
+            components = cycle.problem.cycle_data.get("components", {})
+            for exp_name in ["lp_expander", "expander"]:
+                if exp_name in components:
+                    exp = components[exp_name]
+                    try:
+                        row["expander_inlet_T_C"] = round(
+                            exp["state_in"]["T"] - 273.15, 2
+                        )
+                        row["expander_inlet_p_bar"] = round(
+                            exp["state_in"]["p"] / 1e5, 3
+                        )
+                    except (KeyError, TypeError):
+                        pass
+                    break
+
+            # Condenser exit temperature
+            for cool_name in ["cooler", "condenser"]:
+                if cool_name in components:
+                    cool = components[cool_name]
+                    try:
+                        row["condenser_exit_T_C"] = round(
+                            cool["state_out"]["T"] - 273.15, 2
+                        )
+                    except (KeyError, TypeError):
+                        pass
+                    break
+
+            # ── Converged variable values ──────────────────────────────
+            try:
+                x0_dict = cycle.problem.x0_dict
+                for var_name in var_names:
+                    if var_name in x0_dict:
+                        row[f"x_{var_name}"] = round(float(x0_dict[var_name]), 6)
+            except AttributeError:
+                pass
+
+            print(
+                f"✓  η_sys = {eta * 100:.4f}%   W_net = {W_net:.1f} kW  ({t_elapsed:.0f}s)",
+                end="",
+            )
+
+            # ── Track best ─────────────────────────────────────────────
+            if eta > best_eta:
+                best_eta = eta
+                best_run_idx = i + 1
+                best_cycle = cycle
+                # Keep a copy of the temp YAML for this best run.
+                # (Overwritten each time a better run is found.)
+                _candidate = output_dir / "_best_candidate.yaml"
+                shutil.copy(tmp_path, _candidate)
+                print("  ← best so far", end="")
+
+            print()
+
+        except Exception as e:
+            print(f"✗  {e}")
+            traceback.print_exc()
+            row["error"] = str(e)
+
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink()
+
+        results.append(row)
+
+    # ── Save summary CSV + Excel ───────────────────────────────────────
+    df = pd.DataFrame(results)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    csv_path = output_dir / f"multistart_results_{timestamp}.csv"
+    xlsx_path = output_dir / f"multistart_results_{timestamp}.xlsx"
+    df.to_csv(csv_path, index=False)
+    df.to_excel(xlsx_path, index=False, sheet_name="Multistart")
+
+    # ── Save LHS warm-start YAML (starting point that led to best result) ─
+    # Useful for exact reproduction: running this in "optimize" mode will
+    # re-run the optimizer from the same starting point.
+    lhs_yaml_path = None
+    candidate_path = output_dir / "_best_candidate.yaml"
+    if candidate_path.exists():
+        lhs_yaml_path = (
+            output_dir / f"best_lhs_start_{config_file.stem}_{timestamp}.yaml"
+        )
+        shutil.move(str(candidate_path), str(lhs_yaml_path))
+
+    # ── Save optimized YAML (converged solution as value: fields) ─────
+    # This is the proper warm start: value: fields are set to the actual
+    # converged variable values, not the LHS starting point.
+    optimized_yaml_path = None
+    if best_cycle is not None:
+        optimized_yaml_path = (
+            output_dir / f"optimized_{config_file.stem}_{timestamp}.yaml"
+        )
+        _save_optimized_yaml(
+            base_config_file=config_file,
+            cycle=best_cycle,
+            out_path=optimized_yaml_path,
+            ryaml=ryaml,
+        )
+
+    # ── Print summary ──────────────────────────────────────────────────
+    n_ok = int(df["converged"].sum())
+    n_bad = n_samples - n_ok
+
+    print()
+    print("=" * 70)
+    print("  MULTISTART — SUMMARY")
+    print("=" * 70)
+    print(f"  Total runs : {n_samples}")
+    print(f"  Converged  : {n_ok}")
+    print(f"  Failed     : {n_bad}")
+    print()
+
+    converged_df = df[df["converged"] == True].copy()
+    if not converged_df.empty:
+        converged_df_sorted = converged_df.sort_values("eta_system", ascending=False)
+        print("  Top 5 converged results:")
+        print(f"    {'Run':>5}   {'η_sys [%]':>12}   {'W_net [kW]':>12}")
+        print(f"    {'─'*5}   {'─'*12}   {'─'*12}")
+        for _, r in converged_df_sorted.head(5).iterrows():
+            marker = " ← BEST" if int(r["run"]) == best_run_idx else ""
+            print(
+                f"    {int(r['run']):>5}   {r['eta_system']*100:>11.4f}%   "
+                f"{r['W_net_kW']:>11.1f} kW{marker}"
+            )
+        print()
+        print(f"  Best η_sys : {best_eta * 100:.4f}%  (run {best_run_idx})")
+    else:
+        print("  No runs converged.")
+
+    print()
+    print("  Output files:")
+    print(f"    CSV            : {csv_path}")
+    print(f"    Excel          : {xlsx_path}")
+    if lhs_yaml_path is not None:
+        print(f"    LHS start YAML : {lhs_yaml_path}")
+        print(f"                     (starting point that produced the best result)")
+    if optimized_yaml_path is not None:
+        print(f"    Optimized YAML : {optimized_yaml_path}")
+        print(
+            f"                     (converged solution as value: — use this as warm start)"
+        )
+        print()
+        print("  To run full post-processing on the best result:")
+        print(
+            f'    1. Set CONFIG_FILE = Path(__file__).with_name("{optimized_yaml_path.name}")'
+        )
+        print('    2. Set MODE = "optimize"')
+        print("    3. Run this script")
+    print("=" * 70 + "\n")
+
+    return df
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  RUN
+# ══════════════════════════════════════════════════════════════════════
+if __name__ == "__main__":
+
+    print(f"Mode: {MODE}")
+    print()
+
+    if MODE == "optimize":
+        if not CONFIG_FILE.exists():
+            print(f"Error: config file not found: {CONFIG_FILE}")
+            sys.exit(1)
+        print(f"Config: {CONFIG_FILE.name}\n")
+        run_optimize(CONFIG_FILE)
+
+    elif MODE == "sweep":
+        if not CONFIG_FILE.exists():
+            print(f"Error: config file not found: {CONFIG_FILE}")
+            sys.exit(1)
+        print(f"Config: {CONFIG_FILE.name}\n")
+        run_sweep(CONFIG_FILE, SWEEP_OUTPUT_DIR)
+
+    elif MODE == "pcond_sweep":
+        run_pcond_sweep(
+            subcritical_yaml=PCOND_SUBCRITICAL_TEMPLATES[PCOND_CYCLE],
+            transcritical_yaml=PCOND_TRANSCRITICAL_TEMPLATES[PCOND_CYCLE],
+            fluids=PCOND_FLUIDS,
+            output_dir=PCOND_OUTPUT_DIR,
+            tcrit_cutoff_K=PCOND_TCRIT_CUTOFF_K,
+            cycle_label=PCOND_CYCLE,
+            turbine_model=PCOND_TURBINE_MODEL,
+            n_stages=PCOND_N_STAGES,
+            RPM=PCOND_RPM,
+        )
+
+    elif MODE == "k_sensitivity":
+        run_k_sensitivity(
+            transcritical_yaml=PCOND_TRANSCRITICAL_TEMPLATES[PCOND_CYCLE],
+            tc_fluids=PCOND_TC_FLUIDS,
+            k_values=KSENS_K_VALUES,
+            output_dir=KSENS_OUTPUT_DIR,
+            cycle_label=PCOND_CYCLE,
+            turbine_model=PCOND_TURBINE_MODEL,
+            n_stages=PCOND_N_STAGES,
+            RPM=PCOND_RPM,
+        )
+
+    elif MODE == "multistart":
+        if not MULTISTART_CONFIG.exists():
+            print(f"Error: config file not found: {MULTISTART_CONFIG}")
+            sys.exit(1)
+        run_multistart(
+            config_file=MULTISTART_CONFIG,
+            n_samples=MULTISTART_N_SAMPLES,
+            output_dir=MULTISTART_OUTPUT_DIR,
+        )
+
+    elif MODE == "parametric_study":
+        if not PARAMETRIC_BASE_YAML.exists():
+            print(f"Error: base YAML not found: {PARAMETRIC_BASE_YAML}")
+            sys.exit(1)
+        run_parametric_nstages_rpm(
+            base_yaml=PARAMETRIC_BASE_YAML,
+            n_stages_list=PARAMETRIC_N_STAGES_LIST,
+            rpm_list=PARAMETRIC_RPM_LIST,
+            output_dir=PARAMETRIC_OUTPUT_DIR,
+            interp_var_prefix=PARAMETRIC_INTERP_PREFIX,
+            interp_p_min_expr=PARAMETRIC_INTERP_P_MIN_EXPR,
+            interp_p_max_expr=PARAMETRIC_INTERP_P_MAX_EXPR,
+            expander_inlet_p_var=PARAMETRIC_EXPANDER_INLET_P_VAR,
+            expander_outlet_p_var=PARAMETRIC_EXPANDER_OUTLET_P_VAR,
+        )
+
+    else:
+        print(
+            f"Error: MODE must be 'optimize', 'sweep', 'pcond_sweep', 'k_sensitivity', 'multistart', or 'parametric_study', got '{MODE}'"
+        )
+        sys.exit(1)
+
+    plt.show()

@@ -238,6 +238,7 @@ def render_nested_value(nested_key, data):
 
 #     return c_eq, c_ineq
 
+
 def evaluate_constraints(data, constraints):
     """
     Evaluates the constraints based on the provided data and constraint definitions.
@@ -300,34 +301,40 @@ def evaluate_constraints(data, constraints):
                 c_eq.append(norm_mismatch)
 
             elif constraint_type == ">":
-                satisfied = norm_mismatch > -tol or np.isclose(norm_mismatch, 0.0, atol=tol)
-                c_ineq.append(-norm_mismatch)  # We flip sign: constraint is norm_mismatch ≥ 0 → -norm_mismatch ≤ 0
+                satisfied = norm_mismatch > -tol or np.isclose(
+                    norm_mismatch, 0.0, atol=tol
+                )
+                c_ineq.append(
+                    -norm_mismatch
+                )  # We flip sign: constraint is norm_mismatch ≥ 0 → -norm_mismatch ≤ 0
 
             elif constraint_type == "<":
-                satisfied = norm_mismatch < tol or np.isclose(norm_mismatch, 0.0, atol=tol)
+                satisfied = norm_mismatch < tol or np.isclose(
+                    norm_mismatch, 0.0, atol=tol
+                )
                 c_ineq.append(norm_mismatch)  # Constraint is norm_mismatch ≤ 0
 
             else:
                 raise ValueError(f"Unknown constraint type: {constraint_type}")
 
-
             # Add index if current is an array
             name_out = f"{name_expr}[{i}]" if current.size > 1 else name_expr
 
-            output.append({
-                "name": name_out,
-                "value": curr_val,
-                "type": constraint_type,
-                "target": target,
-                "mismatch": mismatch,
-                "normalized_mismatch": norm_mismatch,
-                "satisfied": satisfied,
-                "normalize": normalize_factor,
-            })
+            output.append(
+                {
+                    "name": name_out,
+                    "value": curr_val,
+                    "type": constraint_type,
+                    "target": target,
+                    "mismatch": mismatch,
+                    "normalized_mismatch": norm_mismatch,
+                    "satisfied": satisfied,
+                    "normalize": normalize_factor,
+                }
+            )
 
     return c_eq, c_ineq, output
 
-      
 
 def evaluate_objective_function(data, objective_function):
     """

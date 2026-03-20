@@ -67,7 +67,7 @@ def smooth_maximum(x1, x2, method="boltzmann", alpha=10):
     """
     # Ensure x1 and x2 have the same shape by broadcasting
     x1, x2 = np.broadcast_arrays(x1, x2)
-    
+
     # Stack the input arrays along a new axis to treat them as a single array
     x = np.stack([x1, x2], axis=0)
 
@@ -131,7 +131,7 @@ def smooth_minimum(x1, x2, method="boltzmann", alpha=10):
     """
     # Ensure x1 and x2 have the same shape by broadcasting
     x1, x2 = np.broadcast_arrays(x1, x2)
-    
+
     # Stack the input arrays along a new axis to treat them as a single array
     x = np.stack([x1, x2], axis=0)
 
@@ -158,7 +158,9 @@ def _smooth_max_logsumexp(x, alpha, axis=None, keepdims=False):
     shift_value = np.sign(alpha) * np.max(np.sign(alpha) * x, axis=axis, keepdims=True)
 
     # Compute log-sum-exp with the shift and scale by alpha
-    log_sum = np.log(np.sum(np.exp(alpha * (x - shift_value)), axis=axis, keepdims=True))
+    log_sum = np.log(
+        np.sum(np.exp(alpha * (x - shift_value)), axis=axis, keepdims=True)
+    )
 
     # Normalize the result by alpha and correct for the shift
     smooth_max = (log_sum + alpha * shift_value) / alpha

@@ -290,4 +290,3 @@ def read_configuration_file(filename):
     config = convert_configuration_options(config)
 
     return config
-

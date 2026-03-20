@@ -1,0 +1,271 @@
+solver_options:
+  library: scipy
+  method: slsqp
+  derivative_method: 2-point
+  derivative_abs_step: 1e-6
+  print_convergence: True
+  plot_convergence: False
+  logger: None
+  update_on: gradient
+  tolerance: 1e-6
+  max_iterations: 300
+  problem_scale: 20
+  callbacks:
+    save_plot: True
+    save_config: True
+    save_report: True
+    plot_cycle: True
+    plot_convergence: False
+
+problem_formulation:
+  cycle_topology: dual_pressure_dual_brine
+
+  plot_settings:
+    pinch_point_diagram: False
+    fluid:
+      plot_saturation_line: True
+      plot_critical_point: True
+      plot_quality_isolines: True
+      plot_pseudocritical_line: False
+      plot_triple_point_liquid: False
+      plot_triple_point_vapor: False
+    diagrams:
+      - x_prop: s
+        y_prop: T
+        x_scale: linear
+        y_scale: linear
+
+  fixed_parameters:
+    working_fluid:
+      name: Toluene
+      backend: HEOS
+      exceptions: True
+    heating_fluid:
+      name: water
+      backend: HEOS
+      exceptions: True
+    cooling_fluid:
+      name: water
+      backend: HEOS
+      exceptions: True
+    special_points:
+      ambient_pressure: 101325
+      ambient_temperature: 20.0 + 273.15
+      maximum_temperature: 512.03 # K = 238.88°C — HP brine (243.88°C) minus 5K pinch
+
+    # ── Two-source mode: HP and LP brine streams kept separate ──
+    # HP brine: well 2 only — T_sat = 243.88°C, h = 1845.8 kJ/kg, 
+    heat_source_hp:
+      inlet_enthalpy: 1845800       # J/kg
+      inlet_pressure: 3581300       # Pa  (34.8 bar-g = 35.813 bar-a)
+      exit_pressure:  3581300       # Pa  (reinjection back to well pressure)
+      minimum_temperature: 373.15   # K   (100°C reinjection limit)
+
+    # LP brine: wells 1, 3, 4 mixed — T_sat = 207.15°C, h_mix = 1382.08 kJ/kg,
+    heat_source_lp:
+      inlet_enthalpy: 1382080       # J/kg
+      inlet_pressure: 1801300       # Pa  (17.0 bar-g = 18.013 bar-a)
+      exit_pressure:  1801300       # Pa  (reinjection back to well pressure)
+      minimum_temperature: 373.15   # K   (100°C reinjection limit)
+
+    heat_sink:
+      inlet_temperature: 295.15
+      inlet_pressure: 101325
+      exit_pressure: 101325
+
+    # Three brine-side heat exchangers
+    hp_evaporator:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+    lp_evaporator:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+    preheater:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+    cooler:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+
+    # Two expanders
+    hp_expander:
+      efficiency: 0.90
+      efficiency_type: "isentropic"
+    lp_expander:
+      efficiency: 0.90
+      efficiency_type: "isentropic"
+
+    # Two ORC-side pumps
+    lp_pump:
+      efficiency: 0.85
+      efficiency_type: "isentropic"
+    hp_pump:
+      efficiency: 0.85
+      efficiency_type: "isentropic"
+
+    # Two brine reinjection pumps (one per stream)
+    heat_source_pump_hp:
+      efficiency: 0.80
+      efficiency_type: "isentropic"
+    heat_source_pump_lp:
+      efficiency: 0.80
+      efficiency_type: "isentropic"
+
+    heat_sink_pump:
+      efficiency: 0.80
+      efficiency_type: "isentropic"
+
+  design_variables:
+    hp_expander_inlet_pressure:
+      min: 0.20*$working_fluid.critical_point.p   
+      max: 0.40*$working_fluid.critical_point.p  
+      value: 1255264.165014039
+
+    hp_expander_inlet_enthalpy:
+      min: 0.873*$working_fluid.critical_point.h  
+      max: 1.00*$working_fluid.critical_point.h  
+      value: 540230.4723335864
+
+    lp_expander_inlet_pressure:
+      min: 0.01*$working_fluid.critical_point.p
+      max: 0.2*$working_fluid.critical_point.p  
+      value: 757700.2963252894
+
+    lp_evaporator_outlet_enthalpy:
+      min: 0.68*$working_fluid.gas_at_maximum_temperature.h 
+      max: 0.95*$working_fluid.gas_at_maximum_temperature.h  
+      value: 490073.01527130266
+
+    compressor_inlet_pressure:
+      min: 1.0*$working_fluid.liquid_at_ambient_temperature.p  
+      max: 5.19*$working_fluid.liquid_at_ambient_temperature.p 
+      value: 5141.660463762866
+
+    compressor_inlet_enthalpy:
+      min: 0.004*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      max: 0.083*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      value: -149698.97262188274
+
+    mass_split_fraction:
+      min: 0.20
+      max: 0.80
+      value: 0.2
+
+    mass_flow_rate_hp:
+      min: 20.0     
+      max: 600.0
+      value: 20.073041853192
+
+    mass_flow_rate_lp:
+      min: 20.0    
+      max: 600.0
+      value: 167.234578214837
+
+    # Working fluid mass flow rate — needed to pass actual mass flow to expanders
+    # (required for Astolfi correlation; consistency constraint closes the loop)
+    # lp_expander_mass_flow_rate:
+    #   min: 50.0     # kg/s — practical lower floor
+    #   max: 1500   # kg/s — physically consistent with 45 MW target (~300 MW heat / ~150 kJ/kg enthalpy drop)
+    #   value: 294.476  # kg/s — warm-started from converged solution
+
+    preheater_outlet_enthalpy:
+      min: 0.014*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      max: 0.55*($working_fluid.critical_point.h - $working_fluid.liquid_at_ambient_temperature.h) + $working_fluid.liquid_at_ambient_temperature.h
+      value: 193065.8786160453
+
+    heat_source_mid_temperature:
+      min: 480.00   
+      max: 516.15   
+      value: 480.892348293802
+
+    heat_sink_exit_temperature:
+      min: 300.15
+      max: 315.15
+      value: 300.15
+
+    mass_flow_rate_cycle:
+      min: 20.0
+      max: 1500.0
+      value: 277.608370  # kg/s — from converged dual pressure two-source ORC
+
+    mass_flow_rate_sink:
+      min: 100.0
+      max: 20000.0
+      value: 6458.862  # kg/s — from converged dual pressure two-source ORC
+
+  constraints:
+    # Pinch points for all three brine-side HXs
+    - variable: $components.hp_evaporator.temperature_difference
+      type: ">"
+      value: 5
+      normalize: True
+
+    - variable: $components.lp_evaporator.temperature_difference
+      type: ">"
+      value: 5
+      normalize: True
+
+    - variable: $components.preheater.temperature_difference
+      type: ">"
+      value: 5
+      normalize: True
+
+    - variable: $components.cooler.temperature_difference
+      type: ">"
+      value: 5
+      normalize: True
+
+    # Subcooling at pump inlet
+    - variable: $components.lp_pump.state_in.subcooling
+      type: ">"
+      value: 1.0
+      normalize: True
+
+    - variable: $components.hp_pump.state_in.subcooling
+      type: ">"
+      value: 1.0
+      normalize: True  
+
+    # Superheating at HP expander inlet
+    - variable: $components.hp_expander.state_in.superheating
+      type: ">"
+      value: 5
+      normalize: True
+
+    # Superheating at LP expander inlet
+    - variable: $components.lp_expander.state_in.superheating
+      type: ">"
+      value: 5
+      normalize: True
+
+    # HP brine reinjection temperature (= heat_source_mid_temperature when pinch is active)
+    - variable: $energy_analysis.hp_brine_exit_temperature
+      type: ">"
+      value: 373.15
+      normalize: True
+
+    # LP brine reinjection temperature (computed from preheater energy balance)
+    - variable: $energy_analysis.lp_brine_exit_temperature
+      type: ">"
+      value: 373.15
+      normalize: True
+
+    # # ── Working fluid mass flow consistency ── only needed in Astolfi correlations
+    # - variable: $components.lp_expander.mass_flow / $variables.lp_expander_mass_flow_rate
+    #   type: "="
+    #   value: 1.0
+    #   normalize: True
+
+    # ── Power output target ──
+    - variable: $energy_analysis.net_system_power
+      type: "="
+      value: 45000000  # W (= 45 MW)
+      normalize: True
+
+  objective_function:
+    variable: $energy_analysis.system_efficiency
+    type: maximize

@@ -7,6 +7,7 @@ except ImportError:
     pass
 else:
     import sys
+
     sys.excepthook = IPython.core.ultratb.FormattedTB(call_pdb=False)
 
 # Import submodules
@@ -57,5 +58,3 @@ def print_package_info():
     print(BREAKLINE)
     print(info)
     print(BREAKLINE)
-
-
