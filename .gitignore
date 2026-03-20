@@ -95,3 +95,15 @@ IMPORTANT_notes/
 
 projects/bjarnarflag/**/*.txt
 graphs/
+
+
+# =========================
+# Data / Output files
+# =========================
+*.xlsx
+*.xls
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.zip
