@@ -21,5 +21,3 @@ cycle.create_animation(format="mp4", fps=1)
 
 # Keep plots open
 plt.show()
-
-

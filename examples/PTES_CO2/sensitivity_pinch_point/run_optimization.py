@@ -31,7 +31,9 @@ if not os.path.exists(DATA_FULLPATH):
         for i, pinch in enumerate(pinch_deltas):
             print()
             print("-" * 80)
-            print(f"Turbomachinery efficiency: {eta*100:.1f} %, Pinch point: {pinch:.1f} K")
+            print(
+                f"Turbomachinery efficiency: {eta*100:.1f} %, Pinch point: {pinch:.1f} K"
+            )
             print("-" * 80)
 
             # Output directory
@@ -53,7 +55,9 @@ if not os.path.exists(DATA_FULLPATH):
             for hx in ["heater", "cooler", "recuperator"]:
                 for side in ["charge", "discharge"]:
                     var = f"$components.{hx}_{side}.temperature_difference"
-                    cycle.set_constraint(variable=var, type=">", value=pinch, normalize=10.0)
+                    cycle.set_constraint(
+                        variable=var, type=">", value=pinch, normalize=10.0
+                    )
 
             # Run and save
             cycle.run_optimization(x0=x0)

@@ -1,9 +1,6 @@
-import warnings
 import numpy as np
 
 from scipy.integrate import solve_ivp
-
-# from .. import utilities
 
 from .turbomachinery_nondimensional import RadialTurbine, CentrifugalCompressor
 from .macchi_astolfi import astolfi_stage_eta, compute_specific_speed
@@ -11,9 +8,27 @@ from .macchi_astolfi import astolfi_stage_eta, compute_specific_speed
 import CoolProp.CoolProp as cp
 import jaxprop as props
 
-# from .. import properties as props
-
 _astolfi_intermediate_printed = False
+
+
+def _specific_flow_exergy(h, s, h0, s0, T0):
+    """
+    Compute specific flow exergy at a thermodynamic state.
+
+    Parameters
+    ----------
+    h  : float  Specific enthalpy at the state [J/kg]
+    s  : float  Specific entropy  at the state [J/(kg·K)]
+    h0 : float  Dead-state specific enthalpy    [J/kg]
+    s0 : float  Dead-state specific entropy     [J/(kg·K)]
+    T0 : float  Dead-state temperature          [K]
+
+    Returns
+    -------
+    float
+        Specific flow exergy  e = (h - h0) - T0*(s - s0)  [J/kg]
+    """
+    return (h - h0) - T0 * (s - s0)
 
 
 def heat_exchanger(
@@ -29,9 +44,11 @@ def heat_exchanger(
     p_out_cold,
     mass_flow_hot,
     mass_flow_cold,
-    enforce_energy_balance=True,
     num_steps=50,
     counter_current=True,
+    *,
+    T0,
+    p0,
 ):
     """
     Simulate a counter-current or co-current heat exchanger using discretized enthalpy and pressure profiles.
@@ -41,22 +58,10 @@ def heat_exchanger(
     For counter-current flow, the hot-side state array is flipped to enable element-wise temperature difference
     computation.
 
-    Both ``mass_flow_hot`` and ``mass_flow_cold`` are required. They are stored
-    in the hot-side and cold-side result dicts.
-
-    When ``enforce_energy_balance=True`` (the default), a normalized energy
-    balance residual is computed:
-
-        energy_balance_residual = (Q_hot - Q_cold) / |Q_hot|
-
-    where Q_hot = mass_flow_hot * (h_in_hot - h_out_hot) and
-    Q_cold = mass_flow_cold * (h_out_cold - h_in_cold). This residual is
-    automatically added as an equality constraint by the calling cycle function.
-
-    Set ``enforce_energy_balance=False`` for heat exchangers whose outlet
-    enthalpy is already computed analytically from the energy balance in the
-    cycle code (e.g. the recuperator), so that a trivially-zero constraint is
-    not added to the optimizer, which would make the constraint Jacobian singular.
+    Both ``mass_flow_hot`` and ``mass_flow_cold`` must be provided as inputs.
+    The energy balance residual ``(Q_hot - Q_cold) / Q_hot`` is computed and
+    returned. For all heat exchangers except the recuperator, this residual is
+    added to the optimizer equality constraints by the cycle function.
 
     Parameters
     ----------
@@ -84,16 +89,14 @@ def heat_exchanger(
         Mass flow rate [kg/s] of the hot fluid.
     mass_flow_cold : float
         Mass flow rate [kg/s] of the cold fluid.
-    enforce_energy_balance : bool, optional
-        If True (default), compute the energy balance residual and return it
-        for automatic addition as an equality constraint. Set to False for
-        heat exchangers whose outlet enthalpy is analytically derived from the
-        energy balance in the cycle code (e.g. the recuperator), to avoid
-        adding a trivially-zero constraint that would make the Jacobian singular.
     num_steps : int, optional
         Number of discretization steps (default is 50).
     counter_current : bool, optional
         If True, assumes counter-current flow and flips hot-side state arrays (default is True).
+    T0 : float
+        Dead-state temperature [K]. Used to compute the exergy analysis.
+    p0 : float
+        Dead-state pressure [Pa]. Used to compute the exergy analysis.
 
     Returns
     -------
@@ -107,9 +110,11 @@ def heat_exchanger(
         - 'temperature_hot_side': ndarray, temperatures [K] for the hot side (ordered by increasing T)
         - 'temperature_cold_side': ndarray, temperatures [K] for the cold side
         - 'temperature_difference': ndarray, element-wise temperature difference [K]
-        - 'mass_flow_ratio': float, ratio of cold-side to hot-side mass flow required for heat balance
-        - 'energy_balance_residual': float, normalized energy balance residual [-]
-          (= 0 when energy balance is exactly satisfied)
+        - 'energy_balance_residual': float, normalized energy balance residual [-] (= 0 when satisfied)
+        - 'heat_flow': float, total heat duty [W] (hot-side reference: mass_flow_hot * dh_hot)
+        - 'energy_analysis': dict with keys 'Q_hot' [W], 'Q_cold' [W], 'heat_balance' [W]
+        - 'exergy_analysis': dict with keys 'e_hot_in', 'e_hot_out', 'e_cold_in',
+            'e_cold_out' [J/kg], 'E_fuel' [W], 'E_product' [W], 'E_D' [W], 'eta_exergy' [-]
     """
 
     # Evaluate properties on the hot side
@@ -139,21 +144,71 @@ def heat_exchanger(
     # Compute temperature difference
     dT = hot_side["states"]["T"] - cold_side["states"]["T"]
 
-    # Compute mass flow ratio
-    # Use 1.0 for cases with no heat exchange (i.e., no recuperator)
     dh_hot = hot_side["state_in"].h - hot_side["state_out"].h
     dh_cold = cold_side["state_out"].h - cold_side["state_in"].h
-    mass_ratio = 1.00 if (dh_cold == 0 or dh_hot == 0) else dh_cold / dh_hot
 
-    # Store mass flows and optionally compute energy balance residual
+    # Store mass flows
     hot_side["mass_flow"] = mass_flow_hot
     cold_side["mass_flow"] = mass_flow_cold
-    if enforce_energy_balance:
-        Q_hot = mass_flow_hot * dh_hot
-        Q_cold = mass_flow_cold * dh_cold
-        energy_balance_residual = (Q_hot - Q_cold) / abs(Q_hot) if Q_hot != 0 else 0.0
-    else:
-        energy_balance_residual = None
+
+    # Energy analysis
+    Q_hot = mass_flow_hot * dh_hot  # total heat transferred from hot side [W]
+    Q_cold = mass_flow_cold * dh_cold  # total heat absorbed by cold side     [W]
+    heat_balance = Q_hot - Q_cold  # should be ~0 when energy balance holds
+
+    # Cumulative Q arrays along the HX for T-Q plotting
+    Q_hot_array = mass_flow_hot * (hot_side["state_in"]["h"] - hot_side["states"]["h"])
+    Q_cold_array = mass_flow_cold * (
+        cold_side["states"]["h"] - cold_side["state_in"]["h"]
+    )
+    hot_side["heat_flow"] = Q_hot_array
+    cold_side["heat_flow"] = Q_cold_array
+
+    energy_analysis = {
+        "Q_hot": Q_hot,
+        "Q_cold": Q_cold,
+        "heat_balance": heat_balance,
+    }
+
+    energy_balance_residual = (Q_hot - Q_cold) / abs(Q_hot) if Q_hot != 0 else 0.0
+
+    # Exergy analysis
+    ds_hot = fluid_hot.get_state(props.PT_INPUTS, p0, T0)
+    ds_cold = fluid_cold.get_state(props.PT_INPUTS, p0, T0)
+    h0_hot, s0_hot = ds_hot.h, ds_hot.s
+    h0_cold, s0_cold = ds_cold.h, ds_cold.s
+
+    # Specific flow exergies — ensure physical inlet/outlet ordering
+    hot_in = hot_side["state_in"]
+    hot_out = hot_side["state_out"]
+    if hot_in.T < hot_out.T:
+        hot_in, hot_out = hot_out, hot_in
+
+    cold_in = cold_side["state_in"]
+    cold_out = cold_side["state_out"]
+    if cold_in.T > cold_out.T:
+        cold_in, cold_out = cold_out, cold_in
+
+    e_hot_in = _specific_flow_exergy(hot_in.h, hot_in.s, h0_hot, s0_hot, T0)
+    e_hot_out = _specific_flow_exergy(hot_out.h, hot_out.s, h0_hot, s0_hot, T0)
+    e_cold_in = _specific_flow_exergy(cold_in.h, cold_in.s, h0_cold, s0_cold, T0)
+    e_cold_out = _specific_flow_exergy(cold_out.h, cold_out.s, h0_cold, s0_cold, T0)
+
+    E_fuel = mass_flow_hot * (e_hot_in - e_hot_out)  # [W]
+    E_product = mass_flow_cold * (e_cold_out - e_cold_in)  # [W]
+    E_D = E_fuel - E_product  # [W]  ≥ 0
+    eta_exergy = E_product / E_fuel
+
+    exergy_analysis = {
+        "e_hot_in": float(e_hot_in),
+        "e_hot_out": float(e_hot_out),
+        "e_cold_in": float(e_cold_in),
+        "e_cold_out": float(e_cold_out),
+        "E_fuel": float(E_fuel),
+        "E_product": float(E_product),
+        "E_D": float(E_D),
+        "eta_exergy": eta_exergy,
+    }
 
     # Create result dictionary
     result = {
@@ -165,8 +220,10 @@ def heat_exchanger(
         "temperature_hot_side": hot_side["states"]["T"],
         "temperature_cold_side": cold_side["states"]["T"],
         "temperature_difference": dT,
-        "mass_flow_ratio": mass_ratio,
         "energy_balance_residual": energy_balance_residual,
+        "power": 0.0,
+        "energy_analysis": energy_analysis,
+        "exergy_analysis": exergy_analysis,
     }
 
     return result
@@ -174,7 +231,7 @@ def heat_exchanger(
 
 def heat_transfer_process(fluid, h_1, p_1, h_2, p_2, num_steps=25):
     """
-    Compute a discretized heat transfer process by idiscretizing enthalpy and pressure between inlet and outlet.
+    Compute a discretized heat transfer process by discretizing enthalpy and pressure between inlet and outlet.
 
     This function generates a sequence of thermodynamic states along a heat transfer path
     by linearly spacing enthalpy and pressure between inlet and outlet values.
@@ -204,8 +261,6 @@ def heat_transfer_process(fluid, h_1, p_1, h_2, p_2, num_steps=25):
         - 'fluid_name': str, name of the fluid
         - 'state_in': CoolProp state object at the inlet
         - 'state_out': CoolProp state object at the outlet
-        - 'mass_flow': float, set to NaN (to be populated externally)
-        - 'heat_flow': float, set to NaN (to be populated externally)
         - 'color': str, set to 'black' (optional use for plotting)
     """
 
@@ -222,8 +277,6 @@ def heat_transfer_process(fluid, h_1, p_1, h_2, p_2, num_steps=25):
         "fluid_name": fluid.name,
         "state_in": states.at_index(0),
         "state_out": states.at_index(-1),
-        "mass_flow": np.nan,
-        "heat_flow": np.nan,
         "color": "black",
     }
 
@@ -240,39 +293,59 @@ def compression_process(
     mass_flow=None,
     data_in={},
     num_steps=10,
+    *,
+    T0,
+    p0,
 ):
     """
-    Calculate properties along a compression process defined by a isentropic or polytropic efficiency
+    Calculate properties along a compression process defined by an isentropic or polytropic efficiency.
 
     Parameters
     ----------
     fluid : Fluid
-        The fluid object used to evaluate thermodynamic properties
+        The fluid object used to evaluate thermodynamic properties.
     h_in : float
-        Enthalpy at the start of the compression process.
+        Enthalpy at the start of the compression process [J/kg].
     p_in : float
-        Pressure at the start of the compression process.
+        Pressure at the start of the compression process [Pa].
     p_out : float
-        Pressure at the end of the compression process.
+        Pressure at the end of the compression process [Pa].
     efficiency : float
         The efficiency of the compression process.
     efficiency_type : str, optional
-        The type of efficiency to be used in the process ('isentropic' or 'polytropic'). Default is 'isentropic'.
+        The type of efficiency to be used ('isentropic', 'polytropic', or
+        'non-dimensional'). Default is 'isentropic'.
+    mass_flow : float
+        Mass flow rate [kg/s].
+    data_in : dict, optional
+        Additional input data for correlation-based efficiency models.
     num_steps : int, optional
-        The number of steps for the polytropic process calculation. Default is 50.
+        Number of steps for the polytropic process calculation. Default is 10.
+    T0 : float
+        Dead-state temperature [K]. Used to compute the exergy analysis.
+    p0 : float
+        Dead-state pressure [Pa]. Used to compute the exergy analysis.
 
     Returns
     -------
-    tuple
-        Tuple containing (state_out, states) where states is a list with all intermediate states
+    dict
+        Dictionary containing the compression process results, including:
+        - 'states', 'state_in', 'state_out': thermodynamic states
+        - 'efficiency', 'efficiency_type': efficiency descriptor
+        - 'specific_work', 'isentropic_work': specific work values [J/kg]
+        - 'pressure_ratio': outlet-to-inlet pressure ratio
+        - 'mass_flow': mass flow rate [kg/s]
+        - 'power': shaft power consumed [W]  (= mass_flow * specific_work)
+        - 'energy_analysis': dict with 'power' [W], 'specific_work' [J/kg],
+          'isentropic_work' [J/kg]
+        - 'exergy_analysis': dict with 'e_in', 'e_out' [J/kg], 'E_fuel' [W],
+          'E_product' [W], 'E_D' [W], 'eta_exergy' [-]
 
     Raises
     ------
     ValueError
         If an invalid 'efficiency_type' is provided.
-
     """
-
     # Compute inlet state
     state_in = fluid.get_state(props.HmassP_INPUTS, h_in, p_in, supersaturation=True)
     state_out_is = fluid.get_state(
@@ -345,6 +418,37 @@ def compression_process(
     isentropic_work = state_out_is.h - state_in.h
     specific_work = state_out.h - state_in.h
 
+    # Energy analysis
+    power = mass_flow * specific_work
+
+    energy_analysis = {
+        "power": power,
+        "specific_work": specific_work,
+        "isentropic_work": isentropic_work,
+    }
+
+    # Exergy analysis
+    ds = fluid.get_state(props.PT_INPUTS, p0, T0)
+    h0, s0 = ds.h, ds.s
+
+    e_in = _specific_flow_exergy(state_in.h, state_in.s, h0, s0, T0)
+    e_out = _specific_flow_exergy(state_out.h, state_out.s, h0, s0, T0)
+
+    # Fuel = shaft work in, product = exergy gained by fluid
+    E_fuel = power
+    E_product = mass_flow * (e_out - e_in)
+    E_D = E_fuel - E_product
+    eta_exergy = E_product / E_fuel
+
+    exergy_analysis = {
+        "e_in": float(e_in),
+        "e_out": float(e_out),
+        "E_fuel": float(E_fuel),
+        "E_product": float(E_product),
+        "E_D": float(E_D),
+        "eta_exergy": eta_exergy,
+    }
+
     # Create result dictionary
     result = {
         "type": "compressor",
@@ -357,7 +461,10 @@ def compression_process(
         "specific_work": specific_work,
         "isentropic_work": isentropic_work,
         "pressure_ratio": state_out.p / state_in.p,
-        "mass_flow": np.nan,
+        "mass_flow": mass_flow,
+        "power": power,
+        "energy_analysis": energy_analysis,
+        "exergy_analysis": exergy_analysis,
         "color": "black",
         "data_in": data_in,
         "data_out": data_in | data_out,
@@ -376,37 +483,59 @@ def expansion_process(
     mass_flow=None,
     data_in={},
     num_steps=50,
+    *,
+    T0,
+    p0,
 ):
     """
-    Calculate properties along an expansion process defined by an isentropic or polytropic efficiency
+    Calculate properties along an expansion process defined by an isentropic or polytropic efficiency.
 
     Parameters
     ----------
     fluid : Fluid
-        The fluid object used to evaluate thermodynamic properties
+        The fluid object used to evaluate thermodynamic properties.
     h_in : float
-        Enthalpy at the start of the expansion process.
+        Enthalpy at the start of the expansion process [J/kg].
     p_in : float
-        Pressure at the start of the expansion process.
+        Pressure at the start of the expansion process [Pa].
     p_out : float
-        Pressure at the end of the expansion process.
+        Pressure at the end of the expansion process [Pa].
     efficiency : float
         The efficiency of the expansion process.
     efficiency_type : str, optional
-        The type of efficiency to be used in the process ('isentropic', 'polytropic', 'non-dimensional', or 'astolfi-stacking'). Default is 'isentropic'.
+        The type of efficiency ('isentropic', 'polytropic', 'non-dimensional',
+        or 'astolfi-stacking'). Default is 'isentropic'.
+    mass_flow : float
+        Mass flow rate [kg/s].
+    data_in : dict, optional
+        Additional design parameters for correlation-based efficiency models
+        (e.g. RPM, n_stages for 'astolfi-stacking').
     num_steps : int, optional
-        The number of steps for the polytropic process calculation. Default is 50.
+        Number of steps for the polytropic process calculation. Default is 50.
+    T0 : float
+        Dead-state temperature [K]. Used to compute the exergy analysis.
+    p0 : float
+        Dead-state pressure [Pa]. Used to compute the exergy analysis.
 
     Returns
     -------
     dict
-        Dictionary containing the expansion process results, including states, efficiency, specific work, and additional correlation output data.
+        Dictionary containing the expansion process results, including:
+        - 'states', 'state_in', 'state_out': thermodynamic states
+        - 'efficiency', 'efficiency_type': efficiency descriptor
+        - 'specific_work', 'isentropic_work': specific work values [J/kg]
+        - 'pressure_ratio': inlet-to-outlet pressure ratio
+        - 'mass_flow': mass flow rate [kg/s]
+        - 'power': shaft power produced [W]  (= mass_flow * specific_work)
+        - 'energy_analysis': dict with 'power' [W], 'specific_work' [J/kg],
+          'isentropic_work' [J/kg]
+        - 'exergy_analysis': dict with 'e_in', 'e_out' [J/kg], 'E_fuel' [W],
+          'E_product' [W], 'E_D' [W], 'eta_exergy' [-]
 
     Raises
     ------
     ValueError
         If an invalid 'efficiency_type' is provided.
-
     """
     # Compute inlet state
     state_in = fluid.get_state(
@@ -487,11 +616,6 @@ def expansion_process(
     elif efficiency_type == "astolfi-stacking":
         # Stage-stacking with Astolfi (2014) Table 6.6 correlation, see section 6.1.5
         # Each stage efficiency is evaluated as f(SP_stage, Vr_stage, Ns_stage)
-        if mass_flow is None:
-            raise ValueError(
-                "Astolfi-stacking efficiency requires mass_flow. "
-                "Use mass-flow mode (well_mass_flow_rate in YAML)."
-            )
         n_stages = int(data_in.get("n_stages", 3))
         RPM = data_in.get("RPM", None)
         if RPM is None:
@@ -543,6 +667,8 @@ def expansion_process(
         any_SP_clamped = False
         any_Ns_out_of_range = False
 
+       #print(p_stages)
+
         for i in range(n_stages):
             p_in_stg = p_stages[i]
             p_out_stg = p_stages[i + 1]
@@ -585,12 +711,13 @@ def expansion_process(
                 any_Ns_out_of_range = True
 
             # Real outlet of this stage
+           #print(Dh_is_stg)
+           #print(eta_stg)
             h_out_real_stg = h_in_stg - eta_stg * Dh_is_stg
             state_out_real_stg = fluid.get_state(
                 props.HmassP_INPUTS,
                 h_out_real_stg,
                 p_out_stg,
-                supersaturation=True,
                 generalize_quality=True,
             )
 
@@ -665,13 +792,36 @@ def expansion_process(
     isentropic_work = state_in.h - state_out_is.h
     specific_work = state_in.h - state_out.h
 
-    # # Compute degree of superheating
-    # state_in = props.calculate_superheating(state_in, fluid)
-    # state_out = props.calculate_superheating(state_out, fluid)
+    # Energy analysis
+    power = mass_flow * specific_work
 
-    # # Compute degree of subcooling
-    # state_in = props.calculate_subcooling(state_in, fluid)
-    # state_out = props.calculate_subcooling(state_out, fluid)
+    energy_analysis = {
+        "power": power,
+        "specific_work": specific_work,
+        "isentropic_work": isentropic_work,
+    }
+
+    # Exergy analysis
+    ds = fluid.get_state(props.PT_INPUTS, p0, T0)
+    h0, s0 = ds.h, ds.s
+
+    e_in = _specific_flow_exergy(state_in.h, state_in.s, h0, s0, T0)
+    e_out = _specific_flow_exergy(state_out.h, state_out.s, h0, s0, T0)
+
+    # Fuel = exergy drop of fluid, product = shaft work
+    E_fuel = mass_flow * (e_in - e_out)
+    E_product = power
+    E_D = E_fuel - E_product
+    eta_exergy = E_product / E_fuel
+
+    exergy_analysis = {
+        "e_in": float(e_in),
+        "e_out": float(e_out),
+        "E_fuel": float(E_fuel),
+        "E_product": float(E_product),
+        "E_D": float(E_D),
+        "eta_exergy": eta_exergy,
+    }
 
     # Create result dictionary
     result = {
@@ -685,7 +835,10 @@ def expansion_process(
         "specific_work": specific_work,
         "isentropic_work": isentropic_work,
         "pressure_ratio": state_in.p / state_out.p,
-        "mass_flow": np.nan,
+        "mass_flow": mass_flow,
+        "power": power,
+        "energy_analysis": energy_analysis,
+        "exergy_analysis": exergy_analysis,
         "color": "black",
         "data_in": data_in,
         "data_out": data_in | data_out,
@@ -765,46 +918,146 @@ def postprocess_ode(t, y, ode_handle):
     return props.FluidState.stack(states)
 
 
-def compute_component_energy_flows(components):
+def mixing_process(
+    fluid,
+    h_in_1,
+    p_in_1,
+    m_1,
+    h_in_2,
+    p_in_2,
+    m_2,
+    p_out,
+    *,
+    T0,
+    p0,
+):
     """
-    Compute power and heat flows for a set of components in a thermodynamic cycle.
+    Calculate the adiabatic mixing of two streams of the same fluid.
 
-    For heat exchangers, the function calculates local and total heat transfer on both hot and cold sides,
-    assuming precomputed enthalpy profiles. For turbomachinery (compressors or expanders), it evaluates
-    the mechanical power based on mass flow and specific work. The results are stored in-place in the
-    `components` dictionary.
+    The outlet enthalpy is determined by the energy balance:
+        h_out = (m_1 * h_in_1 + m_2 * h_in_2) / (m_1 + m_2)
+
+    The outlet pressure is passed explicitly by the caller. In the dual
+    pressure cycle, both inlet streams are at the LP expander inlet pressure
+    by construction, and this pressure is passed directly as p_out.
 
     Parameters
     ----------
-    components : dict
-        Dictionary of components, each with a 'type' field and required properties such as mass flow,
-        enthalpy states, and specific work.
+    fluid : Fluid
+        The fluid object used to evaluate thermodynamic properties.
+    h_in_1 : float
+        Specific enthalpy of stream 1 at the inlet [J/kg].
+    p_in_1 : float
+        Pressure of stream 1 at the inlet [Pa].
+    m_1 : float
+        Mass flow rate of stream 1 [kg/s].
+    h_in_2 : float
+        Specific enthalpy of stream 2 at the inlet [J/kg].
+    p_in_2 : float
+        Pressure of stream 2 at the inlet [Pa].
+    m_2 : float
+        Mass flow rate of stream 2 [kg/s].
+    p_out : float
+        Pressure of the mixed outlet stream [Pa]. Both inlet streams must
+        be at this pressure level for adiabatic mixing to be valid.
+    T0 : float
+        Dead-state temperature [K]. Used to compute the exergy analysis.
+    p0 : float
+        Dead-state pressure [Pa]. Used to compute the exergy analysis.
 
     Returns
     -------
-    None
-        The function modifies the `components` dictionary in place, adding:
-        - 'power' [W]
-        - 'heat_flow' and 'heat_flow_bis' [W]
-        - 'heat_balance' [W] for heat exchangers
+    dict
+        Dictionary containing:
+        - 'type': 'mixer'
+        - 'state_in_1': thermodynamic state of stream 1 inlet
+        - 'state_in_2': thermodynamic state of stream 2 inlet
+        - 'state_out': thermodynamic state of mixed outlet
+        - 'mass_flow_1': mass flow rate of stream 1 [kg/s]
+        - 'mass_flow_2': mass flow rate of stream 2 [kg/s]
+        - 'mass_flow_out': total outlet mass flow rate [kg/s]
+        - 'energy_analysis': dict with energy balance information
+        - 'exergy_analysis': dict with exergy destruction and efficiency
     """
-    for name, component in components.items():
-        if component["type"] == "heat_exchanger":
-            hot = component["hot_side"]
-            cold = component["cold_side"]
-            Q_hot_array = hot["mass_flow"] * (hot["state_in"]["h"] - hot["states"]["h"])
-            Q_cold_array = cold["mass_flow"] * (
-                cold["states"]["h"] - cold["state_in"]["h"]
-            )
-            component["hot_side"]["heat_flow"] = Q_hot_array
-            component["cold_side"]["heat_flow"] = Q_cold_array
-            # component["hot_side"]["states"]["heat_flow"] = Q_hot_array
-            # component["cold_side"]["states"]["heat_flow"] = Q_cold_array
-            component["heat_flow"] = Q_hot_array[0]
-            component["heat_flow_bis"] = Q_cold_array[-1]
-            component["heat_balance"] = Q_hot_array[0] - Q_cold_array[-1]
-            component["power"] = 0.0
+    # Evaluate inlet states
+    state_in_1 = fluid.get_state(props.HmassP_INPUTS, h_in_1, p_in_1)
+    state_in_2 = fluid.get_state(props.HmassP_INPUTS, h_in_2, p_in_2)
 
-        elif component["type"] in ["compressor", "expander"]:
-            component["power"] = component["mass_flow"] * component["specific_work"]
-            component["heat_flow_rate"] = 0.0
+    # Total mass flow and mixed outlet enthalpy from energy balance
+    m_out = m_1 + m_2
+    h_out = (m_1 * h_in_1 + m_2 * h_in_2) / m_out
+
+    # Evaluate outlet state at the explicitly provided outlet pressure
+    state_out = fluid.get_state(props.HmassP_INPUTS, h_out, p_out)
+
+    # Energy analysis
+    energy_balance_residual = (m_1 * h_in_1 + m_2 * h_in_2) - m_out * h_out
+    energy_analysis = {
+        "mass_flow_1": m_1,
+        "mass_flow_2": m_2,
+        "mass_flow_out": m_out,
+        "h_in_1": h_in_1,
+        "h_in_2": h_in_2,
+        "h_out": h_out,
+        "energy_balance_residual": float(energy_balance_residual),
+    }
+
+    # Exergy analysis
+    ds = fluid.get_state(props.PT_INPUTS, p0, T0)
+    h0, s0 = ds.h, ds.s
+
+    e_in_1 = _specific_flow_exergy(state_in_1.h, state_in_1.s, h0, s0, T0)
+    e_in_2 = _specific_flow_exergy(state_in_2.h, state_in_2.s, h0, s0, T0)
+    e_out = _specific_flow_exergy(state_out.h, state_out.s, h0, s0, T0)
+
+    E_fuel = m_1 * e_in_1 + m_2 * e_in_2
+    E_product = m_out * e_out
+    E_D = E_fuel - E_product
+    eta_exergy = E_product / E_fuel
+
+    exergy_analysis = {
+        "e_in_1": float(e_in_1),
+        "e_in_2": float(e_in_2),
+        "e_out": float(e_out),
+        "E_fuel": float(E_fuel),
+        "E_product": float(E_product),
+        "E_D": float(E_D),
+        "eta_exergy": eta_exergy,
+    }
+
+    # Build states arrays for T-s diagram plotting
+    # Two streams converging to the mixed outlet — mirrors hot_side/cold_side in heat_exchanger
+    states_1 = state_in_1 + state_out  # HP expander outlet -> mixed state
+    states_2 = state_in_2 + state_out  # LP evaporator outlet -> mixed state
+
+    stream_1 = {
+        "states": states_1,
+        "state_in": state_in_1,
+        "state_out": state_out,
+        "mass_flow": m_1,
+    }
+
+    stream_2 = {
+        "states": states_2,
+        "state_in": state_in_2,
+        "state_out": state_out,
+        "mass_flow": m_2,
+    }
+
+    result = {
+        "type": "mixer",
+        "stream_1": stream_1,
+        "stream_2": stream_2,
+        "state_in_1": state_in_1,
+        "state_in_2": state_in_2,
+        "state_out": state_out,
+        "mass_flow_1": m_1,
+        "mass_flow_2": m_2,
+        "mass_flow_out": m_out,
+        "power": 0.0,
+        "specific_work": 0.0,
+        "energy_analysis": energy_analysis,
+        "exergy_analysis": exergy_analysis,
+    }
+
+    return result

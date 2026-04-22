@@ -1,7 +1,7 @@
 import numpy as np
 import thermopt as th
 import matplotlib.pyplot as plt
-  
+
 # Print package info
 th.print_package_info()
 
@@ -55,4 +55,3 @@ plt.show()
 #     cycle.set_config_value(f"{base_key}.min", value)
 #     cycle.set_config_value(f"{base_key}.max", value)
 #     cycle.set_config_value(f"{base_key}.value", value)
-

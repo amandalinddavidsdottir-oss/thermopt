@@ -27,6 +27,7 @@ EXAMPLE_SCRIPTS = [EXAMPLES_DIR / rel_path for rel_path in example_relative_path
 # Optional: make test output more readable
 example_ids = [p.name for p in EXAMPLE_SCRIPTS]
 
+
 @pytest.mark.parametrize("script_path", EXAMPLE_SCRIPTS, ids=example_ids)
 def test_examples(script_path):
     # Use sys.executable instead of just 'python' to run correctly in GitHub actions (Windows)
@@ -36,7 +37,7 @@ def test_examples(script_path):
         cwd=working_dir,
         capture_output=True,
         text=True,
-        env={**os.environ, "DISABLE_PLOTS": "1"}
+        env={**os.environ, "DISABLE_PLOTS": "1"},
     )
 
     assert result.returncode == 0, f"Failed: {script_path}\n{result.stderr}"

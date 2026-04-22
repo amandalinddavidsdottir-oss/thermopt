@@ -9,7 +9,7 @@ Based on the three-variable regression from Table 6.6 of:
 where:
     SP  = V_out_is^0.5 / Dh_is^0.25              Size parameter [m],   valid range [0.02, 1.0]
     Vr  = V_out_is / V_in                         Volume ratio   [-],   valid range [1.2, 5] per stage
-    Ns  = (RPM/60) * V_out_is^0.5 / Dh_is^0.75   Specific speed [-],   valid range [0.045, 0.20]
+    Ns  = (RPM/60) * V_out_is^0.5 / Dh_is^0.75   Specific speed [-],   valid range [0.045, 0.195]
 
 SP is clamped to [0.02, 1.0] before entering the correlation, but the true value is kept
 for reporting. Vr and Ns are flagged if outside their valid ranges.
@@ -67,7 +67,7 @@ def astolfi_stage_eta(SP, Vr, Ns):
         Flagged if outside this range. If Vr > 5, more stages are needed —
         see auto-splitting logic in basic_components.py.
     Ns : float
-        Specific speed [-]. Valid regression range [0.045, 0.20].
+        Specific speed [-]. Valid regression range [0.045, 0.195].
         Flagged if outside this range — result is extrapolation only.
 
     Returns
@@ -85,7 +85,7 @@ def astolfi_stage_eta(SP, Vr, Ns):
     Vr_out_of_range : bool
         True if Vr is outside [1.2, 5] (outside regression calibration range).
     Ns_out_of_range : bool
-        True if Ns is outside [0.045, 0.20] (extrapolation, no accuracy guarantee).
+        True if Ns is outside [0.045, 0.195] (extrapolation, no accuracy guarantee).
     """
     # Clamp SP for the polynomial evaluation, but keep the true value for reporting
     SP_eval = SP
@@ -100,7 +100,7 @@ def astolfi_stage_eta(SP, Vr, Ns):
     # Flag Vr outside the regression calibration range [1.2, 5]
     Vr_out_of_range = Vr < VR_LOWER or Vr > VR_UPPER
 
-    Ns_out_of_range = Ns < 0.045 or Ns > 0.20
+    Ns_out_of_range = Ns < 0.045 or Ns > 0.195
 
     lnSP = math.log(SP_eval)
     lnVr = math.log(Vr)

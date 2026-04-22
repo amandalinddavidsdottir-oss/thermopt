@@ -14,14 +14,22 @@ def plot_cycle_data(ax, cycle_data, x_prop, y_prop, linestyle="-"):
         if component["type"] == "heat_exchanger":
             for side in ["hot_side", "cold_side"]:
                 _plot_cycle_process(
-                    name + "_" + side, cycle_data, x_prop, y_prop, ax, linestyle=linestyle
+                    name + "_" + side,
+                    cycle_data,
+                    x_prop,
+                    y_prop,
+                    ax,
+                    linestyle=linestyle,
                 )
         else:
-            _plot_cycle_process(name, cycle_data, x_prop, y_prop, ax, linestyle=linestyle)
+            _plot_cycle_process(
+                name, cycle_data, x_prop, y_prop, ax, linestyle=linestyle
+            )
 
     # Adjust plot limits if updating
     ax.relim(visible_only=True)
     ax.autoscale_view()
+
 
 def _plot_cycle_process(name, cycle_data, x_prop, y_prop, ax, linestyle="-"):
     """
@@ -45,7 +53,10 @@ def _plot_cycle_process(name, cycle_data, x_prop, y_prop, ax, linestyle="-"):
 
     # Retrieve component data
     x_data, y_data, color = _get_process_data(
-        name, cycle_data, x_prop, y_prop,
+        name,
+        cycle_data,
+        x_prop,
+        y_prop,
     )
 
     # Create new plot elements if data is not None
@@ -132,11 +143,28 @@ cycle_2.create_animation(format="mp4", fps=1)
 
 # Define custom legend entries
 from matplotlib.lines import Line2D
+
 custom_legend = [
-    Line2D([0], [0], linestyle="-", marker="o", linewidth=1.25, color=th.COLORS_MATLAB[1], 
-           markerfacecolor="white", label="Joule-Thomson valve"),
-    Line2D([0], [0], linestyle="--", marker="o", linewidth=1.25, color=th.COLORS_MATLAB[1], 
-           markerfacecolor="white", label="Two-phase turbine")
+    Line2D(
+        [0],
+        [0],
+        linestyle="-",
+        marker="o",
+        linewidth=1.25,
+        color=th.COLORS_MATLAB[1],
+        markerfacecolor="white",
+        label="Joule-Thomson valve",
+    ),
+    Line2D(
+        [0],
+        [0],
+        linestyle="--",
+        marker="o",
+        linewidth=1.25,
+        color=th.COLORS_MATLAB[1],
+        markerfacecolor="white",
+        label="Two-phase turbine",
+    ),
 ]
 
 # Plot results
@@ -194,5 +222,3 @@ th.savefig_in_formats(fig, os.path.join("results", "comparison_sCO2_heat_pump_ph
 
 # Keep plots open
 plt.show()
-
-

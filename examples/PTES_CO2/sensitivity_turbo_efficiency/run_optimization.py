@@ -21,7 +21,7 @@ comp_eff_values = np.linspace(1.00, 0.70, 4)
 if not os.path.exists(DATA_FULLPATH):
     solvers = []
     x0 = None
-    for comp_eff in comp_eff_values:  
+    for comp_eff in comp_eff_values:
         comp_solvers = []
         for turb_eff in turb_eff_range:
             print()

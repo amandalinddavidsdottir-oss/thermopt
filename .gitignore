@@ -109,3 +109,10 @@ graphs/
 *.zip
 *.docx
 *.csv
+
+
+**/Old/
+**/Old versions/
+**/old files/
+**/old yaml file*/
+**/restore/

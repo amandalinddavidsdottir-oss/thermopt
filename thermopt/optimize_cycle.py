@@ -37,9 +37,6 @@ CYCLE_TOPOLOGIES = {
     "power_simple": cycles.cycle_power_simple.evaluate_cycle,
     "recuperated": cycles.cycle_power_recuperated.evaluate_cycle,
     "power_recuperated": cycles.cycle_power_recuperated.evaluate_cycle,
-    "power_split_compression": cycles.cycle_power_split_compression.evaluate_cycle,
-    "split_compression": cycles.cycle_power_split_compression.evaluate_cycle,
-    "recompression": cycles.cycle_power_split_compression.evaluate_cycle,
     "dual_pressure": cycles.cycle_power_dual_pressure_single_brine.evaluate_cycle,
     "power_dual_pressure": cycles.cycle_power_dual_pressure_single_brine.evaluate_cycle,
     "recuperated_dual_pressure": cycles.cycle_power_recuperated_dual_pressure_single_brine.evaluate_cycle,
@@ -48,10 +45,6 @@ CYCLE_TOPOLOGIES = {
     "recuperated_dual_pressure_single_brine": cycles.cycle_power_recuperated_dual_pressure_single_brine.evaluate_cycle,
     "dual_pressure_dual_brine": cycles.cycle_power_dual_pressure_dual_brine.evaluate_cycle,
     "recuperated_dual_pressure_dual_brine": cycles.cycle_power_recuperated_dual_pressure_dual_brine.evaluate_cycle,
-    "refrigeration_simple": cycles.cycle_refrigeration_simple.evaluate_cycle,
-    "refrigeration_recuperated": cycles.cycle_refrigeration_recuperated.evaluate_cycle,
-    "PTES_recuperated": cycles.cycle_PTES_recuperated.evaluate_cycle,
-    "PTES_recuperated_turbo": cycles.cycle_PTES_recuperated_turbo.evaluate_cycle,
 }
 
 GRAPHICS_PLACEHOLDER = {
@@ -769,16 +762,40 @@ class ThermodynamicCycleProblem(psv.OptimizationProblem):
         ax.set_xscale(plot_config["x_scale"])
         ax.set_yscale(plot_config["y_scale"])
 
-        # Plot phase diagram
-        self.fluid.plot_phase_diagram(axes=ax, **plot_config)
+        # Plot phase diagram — strip keys unknown to plot_phase_diagram
+        _phase_diagram_config = {
+            k: v
+            for k, v in plot_config.items()
+            if k not in ("plot_heat_source", "plot_heat_sink")
+        }
+        self.fluid.plot_phase_diagram(axes=ax, **_phase_diagram_config)
 
         # Plot thermodynamic processes
+        plot_heat_source = plot_config.get("plot_heat_source", True)
+        plot_heat_sink = plot_config.get("plot_heat_sink", True)
+
         for name, component in cycle_data["components"].items():
             # Handle heat exchanger components in a special way
             if component["type"] == "heat_exchanger":
                 for side in ["hot_side", "cold_side"]:
+                    side_data = component[side]
+                    try:
+                        identifier = side_data["states"]["identifier"]
+                    except (KeyError, TypeError, AttributeError):
+                        identifier = ""
+                    # Skip heat source (brine) if plot_heat_source is False
+                    if not plot_heat_source and identifier == "heating_fluid":
+                        continue
+                    # Skip heat sink (cooling water) if plot_heat_sink is False
+                    if not plot_heat_sink and identifier == "cooling_fluid":
+                        continue
                     self._plot_cycle_process(
                         name + "_" + side, plot_config, ax, ax_index=ax_index
+                    )
+            elif component["type"] == "mixer":
+                for stream in ["stream_1", "stream_2"]:
+                    self._plot_cycle_process(
+                        name + "_" + stream, plot_config, ax, ax_index=ax_index
                     )
             else:
                 self._plot_cycle_process(name, plot_config, ax, ax_index=ax_index)
@@ -901,6 +918,16 @@ class ThermodynamicCycleProblem(psv.OptimizationProblem):
             data = self.cycle_data["components"][component_name][side_1]
             data_other_side = self.cycle_data["components"][component_name][side_2]
             is_heat_exchanger = True
+
+        elif "_stream_1" in name or "_stream_2" in name:
+            # Extract the mixer stream data
+            if "_stream_1" in name:
+                component_name = name.replace("_stream_1", "")
+                data = self.cycle_data["components"][component_name]["stream_1"]
+            else:
+                component_name = name.replace("_stream_2", "")
+                data = self.cycle_data["components"][component_name]["stream_2"]
+            is_heat_exchanger = False
 
         else:  # Handle non-heat exchanger components
             data = self.cycle_data["components"][name]
@@ -1129,7 +1156,11 @@ class ThermodynamicCycleProblem(psv.OptimizationProblem):
             "plot_triple_point_vapor": False,
             "plot_triple_point_liquid": False,
             "plot_spinodal_line": False,
-            # Add other default settings here
+            # Heat source/sink overlay in T-s/T-h diagrams.
+            # Set to False to hide the brine/cooling water lines, which have no
+            # thermodynamic meaning on the working fluid saturation diagram.
+            "plot_heat_source": True,
+            "plot_heat_sink": True,
         }
 
         # Combine the global fluid settings with the "plots" settings
@@ -1142,10 +1173,44 @@ class ThermodynamicCycleProblem(psv.OptimizationProblem):
 
     def save_data_to_excel(self, filename="performance.xlsx"):
         """
-        Exports the cycle performance data to Excel file
+        Exports the full cycle performance data to an Excel file with five sheets:
+
+        1. cycle_states        — Thermodynamic state points (T, p, h, s, …) at every
+                                 component inlet and outlet.
+        2. cycle_energy        — Cycle-level 1st-Law results: heat flows, powers,
+                                 efficiencies, mass flow rates, energy balance.
+        3. component_energy    — Per-component 1st-Law results: power or heat flow,
+                                 specific work, mass flow rate for every component.
+        4. cycle_exergy        — Cycle-level 2nd-Law results: E_fuel, E_product,
+                                 E_D_total, eta_exergy, balance residual, dead state.
+        5. component_exergy    — Per-component 2nd-Law results: E_D, eta_exergy,
+                                 E_fuel (exergy in), E_product (exergy out) for every
+                                 component that has an exergy_analysis dict.
         """
 
-        # Define variable map
+        # ── Helper: safely convert a value to a plain Python scalar ──────────
+        def _safe(val):
+            if val is None:
+                return None
+            if isinstance(val, (str, bool)):
+                return val
+            if hasattr(val, "item"):
+                try:
+                    return val.item()
+                except Exception:
+                    pass
+            try:
+                return float(val)
+            except Exception:
+                return str(val)
+
+        components = self.cycle_data["components"]
+        energy = self.cycle_data["energy_analysis"]
+        exergy = self.cycle_data.get("exergy_analysis")
+
+        # =====================================================================
+        # Sheet 1: cycle_states — thermodynamic state points
+        # =====================================================================
         variable_map = {
             "fluid_name": {"name": "fluid_name", "unit": "-"},
             "T": {"name": "temperature", "unit": "K"},
@@ -1166,61 +1231,312 @@ class ThermodynamicCycleProblem(psv.OptimizationProblem):
             "subcooling": {"name": "subcooling_degree", "unit": "K"},
         }
 
-        # Initialize a list to hold all rows of the DataFrame
+        headers = ["state"] + [v["name"] for v in variable_map.values()]
+        units_row = ["units"] + [v["unit"] for v in variable_map.values()]
         data_rows = []
 
-        # Prepare the headers and units rows
-        headers = ["state"]
-        units_row = ["units"]
-
-        for key in variable_map:
-            headers.append(variable_map[key]["name"])
-            units_row.append(variable_map[key]["unit"])
-
-        # Iterate over each component in the dictionary
-        for component_name, component in self.cycle_data["components"].items():
-            if component["type"] == "heat_exchanger":
-                # Handle heat exchanger sides separately
+        for comp_name, comp in components.items():
+            if comp["type"] == "heat_exchanger":
                 for side in ["hot_side", "cold_side"]:
-                    # Append the data for state_in and state_out to the rows list
-                    state_in = component[side]["state_in"]
-                    state_out = component[side]["state_out"]
-                    data_rows.append(
-                        [f"{component_name}_{side}_in"]
-                        + [state_in[key] for key in variable_map]
-                    )
-                    data_rows.append(
-                        [f"{component_name}_{side}_out"]
-                        + [state_out[key] for key in variable_map]
-                    )
+                    for pos in ["state_in", "state_out"]:
+                        label = f"{comp_name}_{side}_{pos.replace('state_', '')}"
+                        state = comp[side][pos]
+                        data_rows.append(
+                            [label] + [_safe(state[k]) for k in variable_map]
+                        )
+            elif comp["type"] == "mixer":
+                for stream_name, pos, label_suffix in [
+                    ("stream_1", "state_in", "in_1"),
+                    ("stream_2", "state_in", "in_2"),
+                    ("stream_1", "state_out", "out"),
+                ]:
+                    label = f"{comp_name}_{label_suffix}"
+                    state = comp[stream_name][pos]
+                    data_rows.append([label] + [_safe(state[k]) for k in variable_map])
             else:
-                # Handle non-heat exchanger components
-                # Append the data for state_in and state_out to the rows list
-                state_in = component["state_in"]
-                state_out = component["state_out"]
-                data_rows.append(
-                    [f"{component_name}_in"] + [state_in[key] for key in variable_map]
-                )
-                data_rows.append(
-                    [f"{component_name}_out"] + [state_out[key] for key in variable_map]
-                )
+                for pos in ["state_in", "state_out"]:
+                    label = f"{comp_name}_{pos.replace('state_', '')}"
+                    state = comp[pos]
+                    data_rows.append([label] + [_safe(state[k]) for k in variable_map])
 
-        # Create a DataFrame with data rows
-        df = pd.DataFrame(data_rows, columns=headers)
+        df_states = pd.DataFrame(data_rows, columns=headers)
+        df_states.loc[-1] = units_row
+        df_states.index = df_states.index + 1
+        df_states = df_states.sort_index()
 
-        # Insert the units row
-        df.loc[-1] = units_row  # Adding a row
-        df.index = df.index + 1  # Shifting index
-        df = df.sort_index()  # Sorting by index
+        # =====================================================================
+        # Sheet 2: cycle_energy — cycle-level 1st-Law results
+        # Uses the same pattern as cycle_states: explicit parameter map with
+        # units inserted as the first data row.
+        # Covers all topologies — keys not present in this cycle are skipped.
+        # =====================================================================
+        energy_parameter_map = {
+            # ── Heat flows ──
+            "heater_heat_flow": {"name": "heater_heat_flow", "unit": "W"},
+            "heater_heat_flow_max": {"name": "heater_heat_flow_max", "unit": "W"},
+            "heater_heat_flow_max_ambient": {
+                "name": "heater_heat_flow_max_ambient",
+                "unit": "W",
+            },
+            "hp_evaporator_heat_flow": {"name": "hp_evaporator_heat_flow", "unit": "W"},
+            "lp_evaporator_heat_flow": {"name": "lp_evaporator_heat_flow", "unit": "W"},
+            "preheater_heat_flow": {"name": "preheater_heat_flow", "unit": "W"},
+            "recuperator_heat_flow": {"name": "recuperator_heat_flow", "unit": "W"},
+            "cooler_heat_flow": {"name": "cooler_heat_flow", "unit": "W"},
+            "total_heat_input": {"name": "total_heat_input", "unit": "W"},
+            # ── Powers ──
+            "expander_power": {"name": "expander_power", "unit": "W"},
+            "compressor_power": {"name": "compressor_power", "unit": "W"},
+            "hp_expander_power": {"name": "hp_expander_power", "unit": "W"},
+            "lp_expander_power": {"name": "lp_expander_power", "unit": "W"},
+            "total_expander_power": {"name": "total_expander_power", "unit": "W"},
+            "lp_pump_power": {"name": "lp_pump_power", "unit": "W"},
+            "hp_pump_power": {"name": "hp_pump_power", "unit": "W"},
+            "heat_source_pump_power": {"name": "heat_source_pump_power", "unit": "W"},
+            "heat_source_pump_hp_power": {
+                "name": "heat_source_pump_hp_power",
+                "unit": "W",
+            },
+            "heat_source_pump_lp_power": {
+                "name": "heat_source_pump_lp_power",
+                "unit": "W",
+            },
+            "heat_sink_pump_power": {"name": "heat_sink_pump_power", "unit": "W"},
+            "net_cycle_power": {"name": "net_cycle_power", "unit": "W"},
+            "net_system_power": {"name": "net_system_power", "unit": "W"},
+            # ── Mass flow rates ──
+            "mass_flow_heating_fluid": {
+                "name": "mass_flow_heating_fluid",
+                "unit": "kg/s",
+            },
+            "mass_flow_working_fluid": {
+                "name": "mass_flow_working_fluid",
+                "unit": "kg/s",
+            },
+            "mass_flow_cooling_fluid": {
+                "name": "mass_flow_cooling_fluid",
+                "unit": "kg/s",
+            },
+            "mass_flow_brine_hp": {"name": "mass_flow_brine_hp", "unit": "kg/s"},
+            "mass_flow_brine_lp": {"name": "mass_flow_brine_lp", "unit": "kg/s"},
+            "mass_flow_hp": {"name": "mass_flow_hp", "unit": "kg/s"},
+            "mass_flow_lp": {"name": "mass_flow_lp", "unit": "kg/s"},
+            # ── Efficiencies and ratios ──
+            "cycle_efficiency": {"name": "cycle_efficiency", "unit": "-"},
+            "system_efficiency": {"name": "system_efficiency", "unit": "-"},
+            "system_efficiency_ambient": {
+                "name": "system_efficiency_ambient",
+                "unit": "-",
+            },
+            "backwork_ratio": {"name": "backwork_ratio", "unit": "-"},
+            "split_fraction": {"name": "split_fraction", "unit": "-"},
+            # ── Temperatures ──
+            "brine_exit_temperature": {"name": "brine_exit_temperature", "unit": "K"},
+            "hp_brine_exit_temperature": {
+                "name": "hp_brine_exit_temperature",
+                "unit": "K",
+            },
+            "lp_brine_exit_temperature": {
+                "name": "lp_brine_exit_temperature",
+                "unit": "K",
+            },
+            # ── Balance ──
+            "energy_balance": {"name": "energy_balance", "unit": "W"},
+        }
 
-        # Prepare energy_analysis data
-        df_2 = pd.DataFrame(
-            list(self.cycle_data["energy_analysis"].items()),
-            columns=["Parameter", "Value"],
+        # Build as a three-column table: parameter | unit | value
+        # This is the natural layout for a vertical key-value table.
+        # (cycle_states uses units-as-a-row because it is wide/columnar;
+        #  here the table is narrow so a dedicated unit column is cleaner.)
+        energy_col_rows = []
+        for key, val in energy.items():
+            entry = energy_parameter_map.get(key, {"name": key, "unit": "?"})
+            energy_col_rows.append([entry["name"], entry["unit"], _safe(val)])
+
+        df_cycle_energy = pd.DataFrame(
+            energy_col_rows, columns=["parameter", "unit", "value"]
         )
 
-        # Export to Excel
-        # filename = os.path.join(self.out_dir, filename)
+        # =====================================================================
+        # Display name mapping: internal key → ORC-friendly label
+        # Keeps internal code names unchanged; only affects Excel output.
+        # =====================================================================
+        DISPLAY_NAMES = {
+            "expander": "Turbine",
+            "compressor": "Pump",
+            "heater": "Evaporator",
+            "cooler": "Condenser",
+            "recuperator": "Recuperator",
+            "preheater": "Preheater",
+            "hp_expander": "HP Turbine",
+            "lp_expander": "LP Turbine",
+            "hp_pump": "HP Pump",
+            "lp_pump": "LP Pump",
+            "hp_evaporator": "HP Evaporator",
+            "lp_evaporator": "LP Evaporator",
+            "heat_source_pump": "Heat Source Pump",
+            "heat_source_pump_hp": "Heat Source Pump (HP)",
+            "heat_source_pump_lp": "Heat Source Pump (LP)",
+            "heat_sink_pump": "Heat Sink Pump",
+            "mixer": "Mixer",
+            "mixer_from_hp": "Mixer (from HP)",
+            "mixer_from_lp": "Mixer (from LP)",
+        }
+
+        def _display(name):
+            return DISPLAY_NAMES.get(name, name.replace("_", " ").title())
+
+        # =====================================================================
+        # Sheet 3: component_energy — per-component 1st-Law results
+        # Vertical format (component | parameter | unit | value) avoids sparse
+        # columns since turbomachinery and heat exchangers have different quantities.
+        # =====================================================================
+        comp_energy_rows = []
+        for comp_name, comp in components.items():
+            ea = comp.get("energy_analysis")
+            if ea is None:
+                continue
+            # Skip inactive components (e.g. recuperator when heat flow ≈ 0)
+            power = ea.get("power", 0) or 0
+            q_hot = ea.get("Q_hot", 0) or 0
+            if abs(power) < 1.0 and abs(q_hot) < 1.0:
+                continue
+            comp_type = comp.get("type", "")
+            disp_name = _display(comp_name)
+            mass_flow = _safe(comp.get("mass_flow"))
+
+            # mass_flow is common to all components
+            comp_energy_rows.append([disp_name, "mass_flow", "kg/s", mass_flow])
+
+            if comp_type in ("expander", "compressor"):
+                comp_energy_rows.append(
+                    [disp_name, "power", "W", _safe(ea.get("power"))]
+                )
+                comp_energy_rows.append(
+                    [disp_name, "specific_work", "J/kg", _safe(ea.get("specific_work"))]
+                )
+                comp_energy_rows.append(
+                    [
+                        disp_name,
+                        "isentropic_work",
+                        "J/kg",
+                        _safe(ea.get("isentropic_work")),
+                    ]
+                )
+
+            elif comp_type == "heat_exchanger":
+                comp_energy_rows.append(
+                    [disp_name, "Q_hot", "W", _safe(ea.get("Q_hot"))]
+                )
+                comp_energy_rows.append(
+                    [disp_name, "Q_cold", "W", _safe(ea.get("Q_cold"))]
+                )
+                comp_energy_rows.append(
+                    [disp_name, "heat_balance", "W", _safe(ea.get("heat_balance"))]
+                )
+
+        df_comp_energy = pd.DataFrame(
+            comp_energy_rows, columns=["component", "parameter", "unit", "value"]
+        )
+
+        # =====================================================================
+        # Sheet 4: cycle_exergy — cycle-level 2nd-Law results
+        # =====================================================================
+        if exergy is not None:
+            exergy_parameter_map = {
+                "T0": {"name": "dead_state_temperature", "unit": "K"},
+                "p0": {"name": "dead_state_pressure", "unit": "Pa"},
+                "E_fuel": {"name": "E_fuel", "unit": "W"},
+                "E_product": {"name": "E_product", "unit": "W"},
+                "E_loss_cooler": {"name": "E_loss_cooler", "unit": "W"},
+                "E_D_total": {"name": "E_D_total", "unit": "W"},
+                "E_D_internal": {"name": "E_D_internal", "unit": "W"},
+                "E_D_mixer": {"name": "E_D_mixer", "unit": "W"},
+                "eta_exergy": {"name": "eta_exergy", "unit": "-"},
+                "W_net_cycle": {"name": "W_net_cycle", "unit": "W"},
+                "balance_residual": {"name": "exergy_balance", "unit": "W"},
+            }
+            cycle_exergy_rows = []
+            for key, val in exergy.items():
+                entry = exergy_parameter_map.get(key, {"name": key, "unit": "?"})
+                cycle_exergy_rows.append([entry["name"], entry["unit"], _safe(val)])
+            df_cycle_exergy = pd.DataFrame(
+                cycle_exergy_rows, columns=["parameter", "unit", "value"]
+            )
+        else:
+            df_cycle_exergy = None
+
+        # =====================================================================
+        # Sheet 5: component_exergy — per-component 2nd-Law results
+        # Vertical format (component | parameter | unit | value) because
+        # turbomachinery has e_in/e_out while heat exchangers have four
+        # specific exergy values (e_hot_in, e_hot_out, e_cold_in, e_cold_out).
+        # Inactive components (E_fuel ≈ 0, e.g. recuperator in simple ORC)
+        # are skipped entirely — no rows written.
+        # =====================================================================
+        if exergy is not None:
+            comp_exergy_rows = []
+            for comp_name, comp in components.items():
+                ex = comp["exergy_analysis"]
+                # Skip inactive components (e.g. recuperator when not in use)
+                if (
+                    abs(ex.get("E_fuel", 0) or 0) < 1.0
+                    and abs(ex.get("E_D", 0) or 0) < 1.0
+                ):
+                    continue
+                comp_type = comp.get("type", "")
+                disp_name = _display(comp_name)
+
+                # Common quantities for all active components
+                comp_exergy_rows.append(
+                    [disp_name, "E_fuel", "W", _safe(ex.get("E_fuel"))]
+                )
+                comp_exergy_rows.append(
+                    [disp_name, "E_product", "W", _safe(ex.get("E_product"))]
+                )
+                comp_exergy_rows.append([disp_name, "E_D", "W", _safe(ex.get("E_D"))])
+                comp_exergy_rows.append(
+                    [disp_name, "eta_exergy", "-", _safe(ex.get("eta_exergy"))]
+                )
+
+                # Specific exergies — different fields for turbomachinery vs HX
+                if comp_type in ("expander", "compressor"):
+                    comp_exergy_rows.append(
+                        [disp_name, "e_in", "J/kg", _safe(ex.get("e_in"))]
+                    )
+                    comp_exergy_rows.append(
+                        [disp_name, "e_out", "J/kg", _safe(ex.get("e_out"))]
+                    )
+                elif comp_type == "heat_exchanger":
+                    comp_exergy_rows.append(
+                        [disp_name, "e_hot_in", "J/kg", _safe(ex.get("e_hot_in"))]
+                    )
+                    comp_exergy_rows.append(
+                        [disp_name, "e_hot_out", "J/kg", _safe(ex.get("e_hot_out"))]
+                    )
+                    comp_exergy_rows.append(
+                        [disp_name, "e_cold_in", "J/kg", _safe(ex.get("e_cold_in"))]
+                    )
+                    comp_exergy_rows.append(
+                        [disp_name, "e_cold_out", "J/kg", _safe(ex.get("e_cold_out"))]
+                    )
+
+            df_comp_exergy = pd.DataFrame(
+                comp_exergy_rows, columns=["component", "parameter", "unit", "value"]
+            )
+        else:
+            df_comp_exergy = None
+
+        # =====================================================================
+        # Write all sheets to Excel
+        # =====================================================================
         with pd.ExcelWriter(filename, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="cycle_states")
-            df_2.to_excel(writer, index=False, sheet_name="energy_analysis")
+            df_states.to_excel(writer, index=False, sheet_name="cycle_states")
+            df_cycle_energy.to_excel(writer, index=False, sheet_name="cycle_energy")
+            df_comp_energy.to_excel(writer, index=False, sheet_name="component_energy")
+            if df_cycle_exergy is not None:
+                df_cycle_exergy.to_excel(writer, index=False, sheet_name="cycle_exergy")
+            if df_comp_exergy is not None:
+                df_comp_exergy.to_excel(
+                    writer, index=False, sheet_name="component_exergy"
+                )

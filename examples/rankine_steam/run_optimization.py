@@ -23,5 +23,3 @@ cycle.create_animation(format="mp4", fps=1)
 # Show figures
 if os.getenv("DISABLE_PLOTS", "0") != "1":
     plt.show()
-
-

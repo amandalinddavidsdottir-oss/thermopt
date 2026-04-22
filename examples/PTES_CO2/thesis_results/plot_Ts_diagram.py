@@ -45,4 +45,3 @@ for hx in ["heater", "cooler", "recuperator"]:
 cycle.run_optimization()
 cycle.save_results()
 th.savefig_in_formats(cycle.problem.figure, os.path.join(out_dir, "Ts_diagram"))
-

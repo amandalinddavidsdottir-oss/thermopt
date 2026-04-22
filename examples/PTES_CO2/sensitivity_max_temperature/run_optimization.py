@@ -13,8 +13,8 @@ DATA_FILE = "simulation_data.pkl"
 DATA_FULLPATH = os.path.join(OUT_DIR_BASE, DATA_FILE)
 
 # Parameter space: from high temp to low, and high to low pressure
-hot_temp_range = np.linspace(800 , 400, 17) + 273.15  # K
-max_pressure_values = np.asarray([300, 250, 200])*1e5  # Pa
+hot_temp_range = np.linspace(800, 400, 17) + 273.15  # K
+max_pressure_values = np.asarray([300, 250, 200]) * 1e5  # Pa
 # hot_temp_range = [800+273.15]
 # max_pressure_values = np.asarray([250])*1e5  # Pa
 
@@ -29,7 +29,9 @@ if not os.path.exists(DATA_FULLPATH):
         for p_max in max_pressure_values:
             print()
             print(80 * "-")
-            print(f"Hot temp: {T_hot - 273.15:.2f} degC, Max pressure: {p_max / 1e5:.2f} bar")
+            print(
+                f"Hot temp: {T_hot - 273.15:.2f} degC, Max pressure: {p_max / 1e5:.2f} bar"
+            )
             print(80 * "-")
 
             # Output folder
@@ -45,16 +47,20 @@ if not os.path.exists(DATA_FULLPATH):
             # cycle.set_config_value("solver_options.tolerance", 1e-5)
 
             # Extend the bounds to enable a feasible solution
-            var_temp = "problem_formulation.design_variables.hot_storage_upper_temperature"
-            cycle.set_config_value(f"{var_temp}.max", T_hot+100)
-            var_temp = "problem_formulation.design_variables.hot_storage_lower_temperature"
-            cycle.set_config_value(f"{var_temp}.max", T_hot+100)
+            var_temp = (
+                "problem_formulation.design_variables.hot_storage_upper_temperature"
+            )
+            cycle.set_config_value(f"{var_temp}.max", T_hot + 100)
+            var_temp = (
+                "problem_formulation.design_variables.hot_storage_lower_temperature"
+            )
+            cycle.set_config_value(f"{var_temp}.max", T_hot + 100)
 
             # Set temperature and pressure constraints
             cycle.set_constraint(
                 variable="$components.cooler_charge.cold_side.state_out.T",
                 type="=",
-                value=T_hot-0.1,
+                value=T_hot - 0.1,
                 normalize=True,
             )
             cycle.set_constraint(

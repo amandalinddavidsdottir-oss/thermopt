@@ -4,10 +4,10 @@ import matplotlib.pyplot as plt
 import thermopt as th
 
 
-
 # -------------------------------
 # Muley and Manglik correlation
 # -------------------------------
+
 
 def get_muley_manglik_nusselt(Re, Pr, mu_ratio, beta, phi):
     """
@@ -31,11 +31,12 @@ def get_muley_manglik_nusselt(Re, Pr, mu_ratio, beta, phi):
     Nu : float or ndarray
         Nusselt number [-]
     """
-    term1 = 0.2668 - 0.006967 * (90 - beta) + 7.244e-5 * (90 - beta)**2
+    term1 = 0.2668 - 0.006967 * (90 - beta) + 7.244e-5 * (90 - beta) ** 2
     term2 = 20.78 - 50.94 * phi + 41.16 * phi**2 - 10.51 * phi**3
-    term3 = Re**(0.728 + 0.0543 * np.sin(np.pi * (90 - beta) / 45 + 3.7))
-    term4 = Pr**(1/3) * (mu_ratio)**0.14
+    term3 = Re ** (0.728 + 0.0543 * np.sin(np.pi * (90 - beta) / 45 + 3.7))
+    term4 = Pr ** (1 / 3) * (mu_ratio) ** 0.14
     return term1 * term2 * term3 * term4
+
 
 def get_muley_manglik_friction_factor(Re, beta, phi):
     """
@@ -69,10 +70,11 @@ def get_muley_manglik_friction_factor(Re, beta, phi):
     f : float or ndarray
         Darcy friction factor [-]
     """
-    term1 = 2.917 - 0.1277 * (90 - beta) + 2.016e-3 * (90 - beta)**2
+    term1 = 2.917 - 0.1277 * (90 - beta) + 2.016e-3 * (90 - beta) ** 2
     term2 = 5.474 - 19.02 * phi + 18.93 * phi**2 - 5.341 * phi**3
-    term3 = Re**(-0.2 - 0.0577 * np.sin(np.pi * (90 - beta) / 45 + 2.1))
+    term3 = Re ** (-0.2 - 0.0577 * np.sin(np.pi * (90 - beta) / 45 + 2.1))
     return term1 * term2 * term3
+
 
 def check_validity(Re, beta, phi):
     if Re < 1e3:
@@ -83,11 +85,10 @@ def check_validity(Re, beta, phi):
         raise ValueError("Enlargement factor φ must be between 1.0 and 1.5")
 
 
-
-
 # ----------------------------------
 # Amalfi-Vakili-Thome correlation
 # ----------------------------------
+
 
 # Define baseline correlation functions from Amalfi et al. (2016)
 def get_amalfi_friction_factor(We_m, Bd, rho_star, beta_star):
@@ -97,6 +98,7 @@ def get_amalfi_friction_factor(We_m, Bd, rho_star, beta_star):
     C = 2.125 * beta_star**9.993 + 0.955
     f_tp = C * 15.698 * We_m**-0.475 * Bd**0.255 * rho_star**-0.571
     return f_tp
+
 
 def get_amalfi_nusselt(We_m, Bd, rho_star, beta_star, Re_lo, Re_v, Bo):
     """
@@ -132,11 +134,15 @@ def get_amalfi_nusselt(We_m, Bd, rho_star, beta_star, Re_lo, Re_v, Bo):
     else:
         # Macroscale correlation
         Nu_tp = (
-            18.495 * beta_star**0.248 * Re_v**0.135 * Re_lo**0.351
-            * Bd**0.235 * Bo**0.198 * rho_star**-0.223
+            18.495
+            * beta_star**0.248
+            * Re_v**0.135
+            * Re_lo**0.351
+            * Bd**0.235
+            * Bo**0.198
+            * rho_star**-0.223
         )
     return Nu_tp
-
 
 
 def get_amalfi_nondimensional_groups(geometry, mass_flow, p, h, Fluid):
@@ -175,7 +181,7 @@ def get_amalfi_nondimensional_groups(geometry, mass_flow, p, h, Fluid):
     pitch = geometry["pitch"]
     beta = geometry["beta"]
     d_h = 2 * b
-    A_flow = b * geometry["w_p"]   # single channel flow area
+    A_flow = b * geometry["w_p"]  # single channel flow area
 
     # --- Thermodynamic states ---
     # Saturated liquid and vapor
@@ -226,11 +232,10 @@ def get_amalfi_nondimensional_groups(geometry, mass_flow, p, h, Fluid):
     }
 
 
-
-
 # -------------------------------
 # Plate heat exchanger
 # -------------------------------
+
 
 def compute_sinusoidal_enlargement_factor(amplitude, pitch):
     """
@@ -238,7 +243,7 @@ def compute_sinusoidal_enlargement_factor(amplitude, pitch):
 
     This formula is from Holger Martin (1996), "A theoretical approach to predict the performance of
     chevron-type plate heat exchangers" [Chemical Engineering and Processing, Vol. 35, pp. 301-310].
-    It estimates the surface area enlargement factor Φ as the ratio of the actual (developed) area 
+    It estimates the surface area enlargement factor Φ as the ratio of the actual (developed) area
     to the projected flat area of a sinusoidally corrugated plate.
 
     Using the dimensionless corrugation parameter:
@@ -266,8 +271,7 @@ def compute_sinusoidal_enlargement_factor(amplitude, pitch):
         Estimated surface enlargement factor Φ [-]
     """
     X = 2 * np.pi * amplitude / pitch
-    return (1/6) * (1 + np.sqrt(1 + X**2) + 4 * np.sqrt(1 + X**2 / 2))
-
+    return (1 / 6) * (1 + np.sqrt(1 + X**2) + 4 * np.sqrt(1 + X**2 / 2))
 
 
 def evaluate_plate_hex(state, geometry, mass_flow):
@@ -296,7 +300,7 @@ def evaluate_plate_hex(state, geometry, mass_flow):
         - "pitch" : float
             Corrugation wavelength (peak-to-peak distance) [m]. Typical values: 0.005-0.02 m.
         - "beta" : float
-            Chevron (corrugation inclination) angle [degrees]. Typical values: 30-60°. 
+            Chevron (corrugation inclination) angle [degrees]. Typical values: 30-60°.
             TODO we should decide the convention for bete. Against the flow or aligned with the flow?
 
         Optional keys:
@@ -353,7 +357,7 @@ def evaluate_plate_hex(state, geometry, mass_flow):
     t = geometry["t"]
     b = geometry["b"]  # [m]
     pitch = geometry["pitch"]
-    beta = geometry["beta"]    # [deg]
+    beta = geometry["beta"]  # [deg]
     # D_port = geometry.get("D_port", 0.03)  # optional
     phi = geometry.get("phi", compute_sinusoidal_enlargement_factor(b, pitch))
 
@@ -395,22 +399,19 @@ def evaluate_plate_hex(state, geometry, mass_flow):
     }
 
 
-
-
-
 fluid = th.Fluid(name="water")
-pressure=2e5
-temperature=293.15
+pressure = 2e5
+temperature = 293.15
 mass_flow = 1.5
 state = fluid.get_state(th.PT_INPUTS, pressure, temperature)
 
 geometry = {
-    "L_p": 0.25,               # Plate length in flow direction [m]
-    "w_p": 0.1,                # Plate width perpendicular to flow [m]
-    "t": 0.0005,               # Plate thickness [m]
-    "b": 0.002,                # Corrugation amplitude (half channel height) [m]
-    "pitch": 2*np.pi*0.002,    # Corrugation wavelength (pitch) [m]
-    "beta": 45                 # Chevron (corrugation) angle [deg]
+    "L_p": 0.25,  # Plate length in flow direction [m]
+    "w_p": 0.1,  # Plate width perpendicular to flow [m]
+    "t": 0.0005,  # Plate thickness [m]
+    "b": 0.002,  # Corrugation amplitude (half channel height) [m]
+    "pitch": 2 * np.pi * 0.002,  # Corrugation wavelength (pitch) [m]
+    "beta": 45,  # Chevron (corrugation) angle [deg]
     # Optional:
     # "D_port": 0.03, # Port diameter [m]
     # "phi": 1.2      # Surface enlargement factor [-]
@@ -422,20 +423,18 @@ for k, v in results.items():
     print(f"{k}: {v:.3f}")
 
 
-
-
 # -------------------------------
 # Amplitude to pitch sensitivity
 # -------------------------------
 
 pitch = 1.00
 X_values = [1.0, 1.5, 2.0, 2.5]
-x = np.linspace(0, 3*pitch, 100)
+x = np.linspace(0, 3 * pitch, 100)
 fig, ax = plt.subplots(figsize=(6, 3))
 colors = plt.get_cmap("magma")(np.linspace(0.8, 0.2, len(X_values)))
 for i, X in enumerate(X_values):
     b = X * pitch / 2 / np.pi
-    y = b*np.cos(2*np.pi * x / pitch)
+    y = b * np.cos(2 * np.pi * x / pitch)
     ax.plot(x, y, label=f"X = {X}", color=colors[i])
 
 ax.set_aspect("equal")
@@ -523,9 +522,5 @@ ax4.grid(True)
 plt.tight_layout(pad=1)
 
 
-
 # Show figures
 plt.show()
-
-
-

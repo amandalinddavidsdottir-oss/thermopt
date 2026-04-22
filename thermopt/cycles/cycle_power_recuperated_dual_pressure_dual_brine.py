@@ -6,7 +6,7 @@ from ..components import (
     compression_process,
     expansion_process,
     heat_exchanger,
-    compute_component_energy_flows,
+    mixing_process,
 )
 
 COLORS_MATLAB = utilities.COLORS_MATLAB
@@ -45,28 +45,24 @@ def evaluate_cycle(
     )
     special_points = parameters.pop("special_points")
 
-    # ------------------------------------------------------------------
     # Extract HP and LP brine source parameters
-    # ------------------------------------------------------------------
     T_source_hp_out_min = parameters["heat_source_hp"].pop("minimum_temperature")
     p_source_hp_out = parameters["heat_source_hp"].pop("exit_pressure")
-    if "mass_flow_rate" in parameters["heat_source_hp"]:
-        m_brine_hp = parameters["heat_source_hp"].pop("mass_flow_rate")
-    else:
-        m_brine_hp = variables.pop("mass_flow_rate_hp")
     source_hp_out_min = heating_fluid.get_state(
         cpx.PT_INPUTS, p_source_hp_out, T_source_hp_out_min
     )
 
     T_source_lp_out_min = parameters["heat_source_lp"].pop("minimum_temperature")
     p_source_lp_out = parameters["heat_source_lp"].pop("exit_pressure")
-    if "mass_flow_rate" in parameters["heat_source_lp"]:
-        m_brine_lp = parameters["heat_source_lp"].pop("mass_flow_rate")
-    else:
-        m_brine_lp = variables.pop("mass_flow_rate_lp")
     source_lp_out_min = heating_fluid.get_state(
         cpx.PT_INPUTS, p_source_lp_out, T_source_lp_out_min
     )
+
+    # Total brine mass flow and fixed well fraction
+    hp_well_fraction = parameters.pop("hp_well_fraction")
+    m_brine_total = variables.pop("well_mass_flow_rate_total")
+    m_brine_hp = hp_well_fraction * m_brine_total
+    m_brine_lp = (1.0 - hp_well_fraction) * m_brine_total
 
     # Ambient reference states for each brine stream (for η_utilization / η_ambient)
     # Dead state (T₀, p₀) per DiPippo utilization efficiency convention
@@ -74,12 +70,12 @@ def evaluate_cycle(
     p_ambient = special_points["ambient_pressure"]
     source_hp_out_ambient = heating_fluid.get_state(cpx.PT_INPUTS, p_ambient, T_ambient)
     source_lp_out_ambient = source_hp_out_ambient  # same dead state for both streams
+    T0 = T_ambient
+    p0 = p_ambient
 
     p_sink_out = parameters["heat_sink"].pop("exit_pressure")
 
-    # ------------------------------------------------------------------
     # Extract pressure drops
-    # ------------------------------------------------------------------
     dp_hp_evap_h = parameters["hp_evaporator"].pop("pressure_drop_hot_side")
     dp_hp_evap_c = parameters["hp_evaporator"].pop("pressure_drop_cold_side")
     dp_lp_evap_h = parameters["lp_evaporator"].pop("pressure_drop_hot_side")
@@ -94,23 +90,41 @@ def evaluate_cycle(
     else:
         dp_recup_h, dp_recup_c = 0.0, 0.0
 
-    # ------------------------------------------------------------------
     # Extract design variables
-    # ------------------------------------------------------------------
     hp_expander_inlet_p = variables.pop("hp_expander_inlet_pressure")
     hp_expander_inlet_h = variables.pop("hp_expander_inlet_enthalpy")
-    lp_expander_inlet_p = variables.pop("lp_expander_inlet_pressure")
-    lp_evap_outlet_h = variables.pop("lp_evaporator_outlet_enthalpy")
     compressor_inlet_p = variables.pop("compressor_inlet_pressure")
     compressor_inlet_h = variables.pop("compressor_inlet_enthalpy")
+    lp_evap_outlet_h = variables.pop("lp_evaporator_outlet_enthalpy")
+
+    # LP (intermediate) expander inlet pressure, defined as a fraction between
+    # condensation pressure (fraction=0) and evaporation pressure (fraction=1):
+    #
+    #   p_lp = fraction * p_cond + (1 - fraction) * p_evap
+    #
+    # This way, any initial guess used in multistart will always give a pressure
+    # that is between p_cond and p_evap, so LP < HP is always satisfied from
+    # the start without needing an explicit ordering constraint.
+    lp_fraction = variables.pop("lp_expander_inlet_pressure_fraction")
+    lp_expander_inlet_p = (
+        lp_fraction * compressor_inlet_p + (1.0 - lp_fraction) * hp_expander_inlet_p
+    )
     mass_split_fraction = variables.pop("mass_split_fraction")
-    heat_source_mid_temp = variables.pop("heat_source_mid_temperature")
+    heat_source_hp_evap_exit_fraction = variables.pop(
+        "heat_source_hp_evap_exit_temperature_fraction"
+    )
+    heat_source_lp_evap_exit_fraction = variables.pop(
+        "heat_source_lp_evap_exit_temperature_fraction"
+    )
+    heat_source_preheater_exit_fraction = variables.pop(
+        "heat_source_preheater_exit_temperature_fraction"
+    )
     heat_sink_exit_temp = variables.pop("heat_sink_exit_temperature")
     preheater_outlet_h = variables.pop("preheater_outlet_enthalpy")
     if recuperated:
-        recuperator_effectiveness = variables.pop("recuperator_effectiveness")
+        recuperator_cold_outlet_enthalpy = variables.pop("recuperator_cold_outlet_enthalpy")
     else:
-        recuperator_effectiveness = 0.0
+        recuperator_cold_outlet_enthalpy = None
     x = mass_split_fraction
 
     # Mass flow rates are always design variables
@@ -119,9 +133,7 @@ def evaluate_cycle(
     m_HP = x * m_total
     m_LP = (1.0 - x) * m_total
 
-    # ------------------------------------------------------------------
     # Evaluate LP pump
-    # ------------------------------------------------------------------
     lp_pump_outlet_p = lp_expander_inlet_p / (
         (1.0 - dp_recup_c) * (1.0 - dp_preheater_c) * (1.0 - dp_lp_evap_c)
     )
@@ -134,11 +146,12 @@ def evaluate_cycle(
         lp_pump_outlet_p,
         lp_pump_eff,
         lp_pump_eff_type,
+        mass_flow=m_total,
+        T0=T0,
+        p0=p0,
     )
 
-    # ------------------------------------------------------------------
     # Evaluate HP pump
-    # ------------------------------------------------------------------
     p_3 = lp_pump_outlet_p * (1.0 - dp_recup_c) * (1.0 - dp_preheater_c)
     h_3 = preheater_outlet_h
 
@@ -146,81 +159,140 @@ def evaluate_cycle(
     hp_pump_eff = parameters["hp_pump"].pop("efficiency")
     hp_pump_eff_type = parameters["hp_pump"].pop("efficiency_type")
     hp_pump = compression_process(
-        working_fluid, h_3, p_3, hp_pump_outlet_p, hp_pump_eff, hp_pump_eff_type
+        working_fluid,
+        h_3,
+        p_3,
+        hp_pump_outlet_p,
+        hp_pump_eff,
+        hp_pump_eff_type,
+        mass_flow=m_HP,
+        T0=T0,
+        p0=p0,
     )
 
-    # ------------------------------------------------------------------
     # Evaluate HP expander
-    # ------------------------------------------------------------------
     hp_exp_outlet_p = lp_expander_inlet_p
     hp_exp_eff = parameters["hp_expander"].pop("efficiency", None)
     hp_exp_eff_type = parameters["hp_expander"].pop("efficiency_type")
 
     hp_exp_data_in = {}
+    n_turbines_parallel_hp = parameters["hp_expander"].pop("n_turbines_parallel", 1)
     if hp_exp_eff_type == "astolfi-stacking":
         hp_exp_data_in["n_stages"] = parameters["hp_expander"].pop("n_stages")
         if "RPM" in parameters["hp_expander"]:
             hp_exp_data_in["RPM"] = parameters["hp_expander"].pop("RPM")
+        hp_intermediate_pressures = []
+        for i in range(1, 10):
+            key = f"hp_expander_intermediate_pressure_{i}"
+            if key in variables:
+                hp_intermediate_pressures.append(variables.pop(key))
+        if hp_intermediate_pressures:
+            hp_exp_data_in["intermediate_pressures"] = hp_intermediate_pressures
 
-    hp_expander = expansion_process(
-        working_fluid,
-        hp_expander_inlet_h,
-        hp_expander_inlet_p,
-        hp_exp_outlet_p,
-        hp_exp_eff,
-        hp_exp_eff_type,
-        mass_flow=m_HP,
-        data_in=hp_exp_data_in,
+    turbine_shafts = [
+        expansion_process(
+            working_fluid,
+            hp_expander_inlet_h,
+            hp_expander_inlet_p,
+            hp_exp_outlet_p,
+            hp_exp_eff,
+            hp_exp_eff_type,
+            mass_flow=m_HP / n_turbines_parallel_hp,
+            data_in=hp_exp_data_in,
+            T0=T0,
+            p0=p0,
+        )
+        for _ in range(n_turbines_parallel_hp)
+    ]
+    hp_expander = turbine_shafts[0]
+    hp_expander["mass_flow"] = m_HP
+    hp_expander["n_turbines_parallel"] = n_turbines_parallel_hp
+    hp_expander["power"] = sum(s["power"] for s in turbine_shafts)
+    hp_expander["energy_analysis"]["power"] = hp_expander["power"]
+    hp_expander["exergy_analysis"]["E_fuel"] = sum(
+        s["exergy_analysis"]["E_fuel"] for s in turbine_shafts
+    )
+    hp_expander["exergy_analysis"]["E_product"] = sum(
+        s["exergy_analysis"]["E_product"] for s in turbine_shafts
+    )
+    hp_expander["exergy_analysis"]["E_D"] = sum(
+        s["exergy_analysis"]["E_D"] for s in turbine_shafts
     )
 
-    # ------------------------------------------------------------------
-    # Mix HP expander outlet with LP evaporator outlet
-    # ------------------------------------------------------------------
-    h_7 = hp_expander["state_out"].h
-    h_4 = lp_evap_outlet_h
-    h_8 = x * h_7 + (1.0 - x) * h_4  # Adiabatic mixing energy balance
+    # Mix HP expander outlet with LP evaporator outlet using dedicated mixing component
+    mixer = mixing_process(
+        working_fluid,
+        h_in_1=hp_expander["state_out"].h,
+        p_in_1=hp_expander["state_out"].p,
+        m_1=m_HP,
+        h_in_2=lp_evap_outlet_h,
+        p_in_2=lp_expander_inlet_p,
+        m_2=m_LP,
+        p_out=lp_expander_inlet_p,
+        T0=T0,
+        p0=p0,
+    )
+    h_8 = mixer["state_out"].h
 
-    # ------------------------------------------------------------------
     # Evaluate LP expander
-    # ------------------------------------------------------------------
     lp_exp_outlet_p = compressor_inlet_p / ((1.0 - dp_cooler_h) * (1.0 - dp_recup_h))
     lp_exp_eff = parameters["lp_expander"].pop("efficiency", None)
     lp_exp_eff_type = parameters["lp_expander"].pop("efficiency_type")
 
     lp_exp_data_in = {}
+    n_turbines_parallel_lp = parameters["lp_expander"].pop("n_turbines_parallel", 1)
     if lp_exp_eff_type == "astolfi-stacking":
         lp_exp_data_in["n_stages"] = parameters["lp_expander"].pop("n_stages")
         if "RPM" in parameters["lp_expander"]:
             lp_exp_data_in["RPM"] = parameters["lp_expander"].pop("RPM")
+        lp_intermediate_pressures = []
+        for i in range(1, 10):
+            key = f"lp_expander_intermediate_pressure_{i}"
+            if key in variables:
+                lp_intermediate_pressures.append(variables.pop(key))
+        if lp_intermediate_pressures:
+            lp_exp_data_in["intermediate_pressures"] = lp_intermediate_pressures
 
-    lp_expander = expansion_process(
-        working_fluid,
-        h_8,
-        lp_expander_inlet_p,
-        lp_exp_outlet_p,
-        lp_exp_eff,
-        lp_exp_eff_type,
-        mass_flow=m_total,
-        data_in=lp_exp_data_in,
+    turbine_shafts = [
+        expansion_process(
+            working_fluid,
+            h_8,
+            lp_expander_inlet_p,
+            lp_exp_outlet_p,
+            lp_exp_eff,
+            lp_exp_eff_type,
+            mass_flow=m_total / n_turbines_parallel_lp,
+            data_in=lp_exp_data_in,
+            T0=T0,
+            p0=p0,
+        )
+        for _ in range(n_turbines_parallel_lp)
+    ]
+    lp_expander = turbine_shafts[0]
+    lp_expander["mass_flow"] = m_total
+    lp_expander["n_turbines_parallel"] = n_turbines_parallel_lp
+    lp_expander["power"] = sum(s["power"] for s in turbine_shafts)
+    lp_expander["energy_analysis"]["power"] = lp_expander["power"]
+    lp_expander["exergy_analysis"]["E_fuel"] = sum(
+        s["exergy_analysis"]["E_fuel"] for s in turbine_shafts
+    )
+    lp_expander["exergy_analysis"]["E_product"] = sum(
+        s["exergy_analysis"]["E_product"] for s in turbine_shafts
+    )
+    lp_expander["exergy_analysis"]["E_D"] = sum(
+        s["exergy_analysis"]["E_D"] for s in turbine_shafts
     )
 
-    # ------------------------------------------------------------------
     # Evaluate recuperator
-    # ------------------------------------------------------------------
-    eps = recuperator_effectiveness
     h_in_hot_recup = lp_expander["state_out"].h
     p_in_hot_recup = lp_expander["state_out"].p
-    T_in_hot_recup = lp_expander["state_out"].T
     p_out_hot_recup = p_in_hot_recup * (1.0 - dp_recup_h)
 
     h_in_cold_recup = lp_pump["state_out"].h
     p_in_cold_recup = lp_pump["state_out"].p
     p_out_cold_recup = p_in_cold_recup * (1.0 - dp_recup_c)
 
-    h_out_cold_ideal = working_fluid.get_state(
-        cpx.PT_INPUTS, p_out_cold_recup, T_in_hot_recup
-    ).h
-    h_out_cold_recup = h_in_cold_recup + eps * (h_out_cold_ideal - h_in_cold_recup)
+    h_out_cold_recup = recuperator_cold_outlet_enthalpy if recuperated else h_in_cold_recup
     h_out_hot_recup = h_in_hot_recup - (h_out_cold_recup - h_in_cold_recup)
 
     if recuperated:
@@ -240,15 +312,13 @@ def evaluate_cycle(
         p_out_cold_recup,
         mass_flow_hot=m_total,
         mass_flow_cold=m_total,
-        enforce_energy_balance=False,
         counter_current=True,
         num_steps=num_el_recup,
+        T0=T0,
+        p0=p0,
     )
 
-    # ------------------------------------------------------------------
     # Evaluate HP evaporator
-    # HP brine feeds only the HP evaporator.
-    # ------------------------------------------------------------------
     h_in_cold_hp = hp_pump["state_out"].h
     p_in_cold_hp = hp_pump["state_out"].p
     h_out_cold_hp = hp_expander["state_in"].h
@@ -263,9 +333,35 @@ def evaluate_cycle(
             cpx.PT_INPUTS, p_in_hot_brine_hp, T_in_hot_brine_hp
         ).h
 
+    p_in_hot_brine_lp = parameters["heat_source_lp"].pop("inlet_pressure")
+    h_in_hot_brine_lp = parameters["heat_source_lp"].pop("inlet_enthalpy")
+
+    # Compute brine exit temperatures from fractions — ordering guaranteed by construction:
+    #   HP stream: T_reinjection_hp <= T_hp_evap_exit <= T_hp_brine_inlet
+    #   LP stream: T_reinjection_lp <= T_preheater_exit <= T_lp_evap_exit <= T_lp_brine_inlet
+    T_source_hp_in = heating_fluid.get_state(
+        cpx.HmassP_INPUTS, h_in_hot_brine_hp, p_in_hot_brine_hp
+    ).T
+    T_source_lp_in = heating_fluid.get_state(
+        cpx.HmassP_INPUTS, h_in_hot_brine_lp, p_in_hot_brine_lp
+    ).T
+    heat_source_hp_evap_exit_temp = (
+        T_source_hp_out_min
+        + heat_source_hp_evap_exit_fraction * (T_source_hp_in - T_source_hp_out_min)
+    )
+    heat_source_lp_evap_exit_temp = (
+        T_source_lp_out_min
+        + heat_source_lp_evap_exit_fraction * (T_source_lp_in - T_source_lp_out_min)
+    )
+    heat_source_preheater_exit_temp = (
+        T_source_lp_out_min
+        + heat_source_preheater_exit_fraction
+        * (heat_source_lp_evap_exit_temp - T_source_lp_out_min)
+    )
+
     p_out_hot_hp = p_in_hot_brine_hp * (1.0 - dp_hp_evap_h)
     h_out_hot_hp = heating_fluid.get_state(
-        cpx.PT_INPUTS, p_out_hot_hp, heat_source_mid_temp
+        cpx.PT_INPUTS, p_out_hot_hp, heat_source_hp_evap_exit_temp
     ).h
     num_el_hp = parameters["hp_evaporator"].pop("num_elements")
     hp_evaporator = heat_exchanger(
@@ -283,23 +379,21 @@ def evaluate_cycle(
         mass_flow_cold=m_HP,
         counter_current=True,
         num_steps=num_el_hp,
+        T0=T0,
+        p0=p0,
     )
 
-    # ------------------------------------------------------------------
     # Evaluate LP evaporator
-    # LP brine is a completely separate stream from the HP brine.
-    # ------------------------------------------------------------------
     h_in_cold_lp = h_3
     p_in_cold_lp = p_3
     h_out_cold_lp = lp_evap_outlet_h
     p_out_cold_lp = p_3 * (1.0 - dp_lp_evap_c)
 
-    p_in_hot_brine_lp = parameters["heat_source_lp"].pop("inlet_pressure")
-    h_in_hot_brine_lp = parameters["heat_source_lp"].pop("inlet_enthalpy")
-
-    h_out_hot_lp = h_in_hot_brine_lp - (m_LP / m_brine_lp) * (h_out_cold_lp - h_in_cold_lp)
     p_in_hot_lp = p_in_hot_brine_lp
     p_out_hot_lp = p_in_hot_lp * (1.0 - dp_lp_evap_h)
+    h_out_hot_lp = heating_fluid.get_state(
+        cpx.PT_INPUTS, p_out_hot_lp, heat_source_lp_evap_exit_temp
+    ).h
 
     num_el_lp = parameters["lp_evaporator"].pop("num_elements")
     lp_evaporator = heat_exchanger(
@@ -317,12 +411,11 @@ def evaluate_cycle(
         mass_flow_cold=m_LP,
         counter_current=True,
         num_steps=num_el_lp,
+        T0=T0,
+        p0=p0,
     )
 
-    # ------------------------------------------------------------------
     # Evaluate preheater
-    # LP brine continues from the LP evaporator exit into the preheater.
-    # ------------------------------------------------------------------
     h_in_cold_pre = recuperator["cold_side"]["state_out"].h
     p_in_cold_pre = recuperator["cold_side"]["state_out"].p
     h_out_cold_pre = h_3
@@ -330,7 +423,11 @@ def evaluate_cycle(
 
     p_in_hot_pre = p_out_hot_lp
     h_in_hot_pre = h_out_hot_lp
-    h_out_hot_pre = h_in_hot_pre - (m_total / m_brine_lp) * (h_out_cold_pre - h_in_cold_pre)
+    h_out_hot_pre = heating_fluid.get_state(
+        cpx.PT_INPUTS,
+        p_in_hot_pre * (1.0 - dp_preheater_h),
+        heat_source_preheater_exit_temp,
+    ).h
     p_out_hot_pre = p_in_hot_pre * (1.0 - dp_preheater_h)
 
     num_el_pre = parameters["preheater"].pop("num_elements")
@@ -349,15 +446,15 @@ def evaluate_cycle(
         mass_flow_cold=m_total,
         counter_current=True,
         num_steps=num_el_pre,
+        T0=T0,
+        p0=p0,
     )
 
     hp_brine_exit_temperature = hp_evaporator["hot_side"]["state_out"].T
     lp_brine_exit_temperature = preheater["hot_side"]["state_out"].T
     brine_exit_temperature = min(hp_brine_exit_temperature, lp_brine_exit_temperature)
 
-    # ------------------------------------------------------------------
     # Evaluate HP brine reinjection pump
-    # ------------------------------------------------------------------
     eff_hs_hp = parameters["heat_source_pump_hp"].pop("efficiency")
     eff_type_hs_hp = parameters["heat_source_pump_hp"].pop("efficiency_type")
     hs_pump_hp = compression_process(
@@ -367,11 +464,12 @@ def evaluate_cycle(
         p_source_hp_out,
         eff_hs_hp,
         eff_type_hs_hp,
+        mass_flow=m_brine_hp,
+        T0=T0,
+        p0=p0,
     )
 
-    # ------------------------------------------------------------------
     # Evaluate LP brine reinjection pump
-    # ------------------------------------------------------------------
     eff_hs_lp = parameters["heat_source_pump_lp"].pop("efficiency")
     eff_type_hs_lp = parameters["heat_source_pump_lp"].pop("efficiency_type")
     hs_pump_lp = compression_process(
@@ -381,11 +479,12 @@ def evaluate_cycle(
         p_source_lp_out,
         eff_hs_lp,
         eff_type_hs_lp,
+        mass_flow=m_brine_lp,
+        T0=T0,
+        p0=p0,
     )
 
-    # ------------------------------------------------------------------
     # Evaluate heat-sink pump
-    # ------------------------------------------------------------------
     T_in_sink = parameters["heat_sink"].pop("inlet_temperature")
     p_in_sink = parameters["heat_sink"].pop("inlet_pressure")
     h_in_sink = cooling_fluid.get_state(cpx.PT_INPUTS, p_in_sink, T_in_sink).h
@@ -393,12 +492,18 @@ def evaluate_cycle(
     eff_sink = parameters["heat_sink_pump"].pop("efficiency")
     eff_type_sink = parameters["heat_sink_pump"].pop("efficiency_type")
     heat_sink_pump = compression_process(
-        cooling_fluid, h_in_sink, p_in_sink, p_out_sink, eff_sink, eff_type_sink
+        cooling_fluid,
+        h_in_sink,
+        p_in_sink,
+        p_out_sink,
+        eff_sink,
+        eff_type_sink,
+        mass_flow=m_sink,
+        T0=T0,
+        p0=p0,
     )
 
-    # ------------------------------------------------------------------
     # Evaluate cooler
-    # ------------------------------------------------------------------
     p_in_cold_cond = heat_sink_pump["state_out"].p
     h_in_cold_cond = heat_sink_pump["state_out"].h
     p_out_cold_cond = p_in_cold_cond * (1.0 - dp_cooler_c)
@@ -425,28 +530,11 @@ def evaluate_cycle(
         mass_flow_cold=m_sink,
         counter_current=True,
         num_steps=num_el_cond,
+        T0=T0,
+        p0=p0,
     )
 
-    # Compute net power from known mass flows
-    hp_turb_w = x * hp_expander["specific_work"]
-    lp_turb_w = lp_expander["specific_work"]
-    lp_pump_w = lp_pump["specific_work"]
-    hp_pump_w = x * hp_pump["specific_work"]
-    net_spec_w = (hp_turb_w + lp_turb_w) - (lp_pump_w + hp_pump_w)
-    W_net = net_spec_w * m_total
-
-    # Assign mass flows to turbomachinery
-    hp_expander["mass_flow"] = m_HP
-    lp_expander["mass_flow"] = m_total
-    lp_pump["mass_flow"] = m_total
-    hp_pump["mass_flow"] = m_HP
-    hs_pump_hp["mass_flow"] = m_brine_hp
-    hs_pump_lp["mass_flow"] = m_brine_lp
-    heat_sink_pump["mass_flow"] = m_sink
-
-    # ------------------------------------------------------------------
     # Assemble components dict
-    # ------------------------------------------------------------------
     components = {
         "hp_expander": hp_expander,
         "lp_expander": lp_expander,
@@ -460,55 +548,42 @@ def evaluate_cycle(
         "heat_source_pump_hp": hs_pump_hp,
         "heat_source_pump_lp": hs_pump_lp,
         "heat_sink_pump": heat_sink_pump,
-    }
-    compute_component_energy_flows(components)
-
-    # Mixer pseudo-components for T-s diagram plotting
-    components["mixer_from_hp"] = {
-        "type": "mixer",
-        "states": hp_expander["state_out"] + lp_expander["state_in"],
-        "state_in": hp_expander["state_out"],
-        "state_out": lp_expander["state_in"],
-        "mass_flow": m_HP,
-        "specific_work": 0.0,
-        "power": 0.0,
-    }
-    components["mixer_from_lp"] = {
-        "type": "mixer",
-        "states": lp_evaporator["cold_side"]["state_out"] + lp_expander["state_in"],
-        "state_in": lp_evaporator["cold_side"]["state_out"],
-        "state_out": lp_expander["state_in"],
-        "mass_flow": m_LP,
-        "specific_work": 0.0,
-        "power": 0.0,
+        "mixer": mixer,
     }
 
-    # ------------------------------------------------------------------
     # First-law analysis
-    # ------------------------------------------------------------------
-    Q_hp = hp_evaporator["heat_flow"]
-    Q_lp = lp_evaporator["heat_flow"]
-    Q_pre = preheater["heat_flow"]
-    Q_recup = recuperator["heat_flow"]
+    # Component-level values — read directly from each component's
+    # energy_analysis dict (computed inside the component functions).
+    Q_hp = hp_evaporator["energy_analysis"]["Q_hot"]
+    Q_lp = lp_evaporator["energy_analysis"]["Q_hot"]
+    Q_pre = preheater["energy_analysis"]["Q_hot"]
+    Q_recup = recuperator["energy_analysis"]["Q_hot"]
     Q_in = Q_hp + Q_lp + Q_pre
-    Q_out = cooler["heat_flow"]
-    W_out = hp_expander["power"] + lp_expander["power"]
-    W_comp = lp_pump["power"] + hp_pump["power"]
-    W_aux = hs_pump_hp["power"] + hs_pump_lp["power"] + heat_sink_pump["power"]
+    Q_out = cooler["energy_analysis"]["Q_hot"]
+    W_out = (
+        hp_expander["energy_analysis"]["power"]
+        + lp_expander["energy_analysis"]["power"]
+    )
+    W_comp = lp_pump["energy_analysis"]["power"] + hp_pump["energy_analysis"]["power"]
+    W_aux = (
+        hs_pump_hp["energy_analysis"]["power"]
+        + hs_pump_lp["energy_analysis"]["power"]
+        + heat_sink_pump["energy_analysis"]["power"]
+    )
     W_in = W_comp + W_aux
-    Q_in_max = (
-        m_brine_hp * (h_in_hot_brine_hp - source_hp_out_min.h)
-        + m_brine_lp * (h_in_hot_brine_lp - source_lp_out_min.h)
+    W_net = W_out - W_comp  # net cycle power (turbines minus WF pumps)
+
+    Q_in_max = m_brine_hp * (h_in_hot_brine_hp - source_hp_out_min.h) + m_brine_lp * (
+        h_in_hot_brine_lp - source_lp_out_min.h
     )
-    Q_in_max_ambient = (
-        m_brine_hp * (h_in_hot_brine_hp - source_hp_out_ambient.h)
-        + m_brine_lp * (h_in_hot_brine_lp - source_lp_out_ambient.h)
-    )
+    Q_in_max_ambient = m_brine_hp * (
+        h_in_hot_brine_hp - source_hp_out_ambient.h
+    ) + m_brine_lp * (h_in_hot_brine_lp - source_lp_out_ambient.h)
     cycle_efficiency = (W_out - W_in) / Q_in
     system_efficiency = (W_out - W_in) / Q_in_max
     system_efficiency_ambient = (W_out - W_in) / Q_in_max_ambient
     backwork_ratio = W_comp / W_out
-    energy_balance = (Q_in + W_comp + W_aux) - (W_out + Q_out)
+    energy_balance = (Q_in + W_comp) - (W_out + Q_out)
 
     energy_analysis = {
         "hp_evaporator_heat_flow": Q_hp,
@@ -519,14 +594,7 @@ def evaluate_cycle(
         "heater_heat_flow_max": Q_in_max,
         "heater_heat_flow_max_ambient": Q_in_max_ambient,
         "cooler_heat_flow": Q_out,
-        "hp_expander_power": hp_expander["power"],
-        "lp_expander_power": lp_expander["power"],
         "total_expander_power": W_out,
-        "lp_pump_power": lp_pump["power"],
-        "hp_pump_power": hp_pump["power"],
-        "heat_source_pump_hp_power": hs_pump_hp["power"],
-        "heat_source_pump_lp_power": hs_pump_lp["power"],
-        "heat_sink_pump_power": heat_sink_pump["power"],
         "net_cycle_power": W_net,
         "net_system_power": W_out - W_in,
         "mass_flow_brine_hp": m_brine_hp,
@@ -546,10 +614,55 @@ def evaluate_cycle(
         "lp_brine_exit_temperature": lp_brine_exit_temperature,
     }
 
+    # Cycle-level exergy analysis (2nd Law)
+    _aux_pump_names = {"heat_source_pump_hp", "heat_source_pump_lp", "heat_sink_pump"}
+
+    # E_fuel = total exergy dropped by both brine streams across all brine HXs.
+    # HP brine passes through hp_evaporator only.
+    # LP brine passes through lp_evaporator → preheater in series.
+    E_fuel = (
+        hp_evaporator["exergy_analysis"]["E_fuel"]
+        + lp_evaporator["exergy_analysis"]["E_fuel"]
+        + preheater["exergy_analysis"]["E_fuel"]
+    )
+
+    E_product = energy_analysis["net_system_power"]
+
+    E_loss_cooler = cooler["exergy_analysis"]["E_product"]
+
+    # Mixer exergy destruction — computed inside the dedicated mixing_process component
+    E_D_mixer = mixer["exergy_analysis"]["E_D"]
+
+    E_D_total = sum(comp["exergy_analysis"]["E_D"] for comp in components.values())
+    E_D_internal = sum(
+        comp["exergy_analysis"]["E_D"]
+        for name, comp in components.items()
+        if name not in _aux_pump_names
+    )
+
+    eta_exergy = E_product / E_fuel if E_fuel != 0 else 0.0
+
+    balance_residual = E_fuel - (W_net + E_D_internal + E_loss_cooler)
+
+    exergy_analysis = {
+        "T0": T0,
+        "p0": p0,
+        "E_fuel": E_fuel,
+        "E_product": E_product,
+        "E_loss_cooler": E_loss_cooler,
+        "E_D_total": E_D_total,
+        "E_D_internal": E_D_internal,
+        "E_D_mixer": E_D_mixer,
+        "eta_exergy": eta_exergy,
+        "W_net_cycle": W_net,
+        "balance_residual": balance_residual,
+    }
+
     # Evaluate objective function and constraints
     output = {
         "components": components,
         "energy_analysis": energy_analysis,
+        "exergy_analysis": exergy_analysis,
         "variables": {
             "mass_flow_rate_cycle": m_total,
             "mass_flow_rate_sink": m_sink,
@@ -562,18 +675,37 @@ def evaluate_cycle(
     )
 
     # Automatically add heat exchanger energy balance residuals as equality constraints
-    c_eq_hx = np.array([
-        component["energy_balance_residual"]
-        for component in components.values()
-        if component.get("type") == "heat_exchanger"
-        and component.get("energy_balance_residual") is not None
-    ])
+    c_eq_hx = np.array(
+        [
+            component["energy_balance_residual"]
+            for name, component in components.items()
+            if component.get("type") == "heat_exchanger" and name != "recuperator"
+        ]
+    )
     if len(c_eq_hx) > 0:
         c_eq = np.concatenate([c_eq, c_eq_hx])
 
-    # ------------------------------------------------------------------
+    # Add energy balance residuals to constraint_report so they appear in
+    # the optimization report. The residual is (Q_hot - Q_cold) / Q_hot,
+    # so the equality target is 0.0 and no normalization is needed.
+    tol = 1e-4
+    for name, component in components.items():
+        if component.get("type") == "heat_exchanger" and name != "recuperator":
+            residual = float(component["energy_balance_residual"])
+            constraint_report.append(
+                {
+                    "name": f"$components.{name}.energy_balance_residual",
+                    "value": residual,
+                    "type": "=",
+                    "target": 0.0,
+                    "mismatch": residual,
+                    "normalized_mismatch": residual,
+                    "satisfied": abs(residual) < tol,
+                    "normalize": None,
+                }
+            )
+
     # Set colors for plotting
-    # ------------------------------------------------------------------
     orange = COLORS_MATLAB[1]
     blue = COLORS_MATLAB[0]
     red = COLORS_MATLAB[6]
@@ -593,8 +725,14 @@ def evaluate_cycle(
     lp_expander["plot_params"] = {"color": orange, "linestyle": "-"}
     lp_pump["plot_params"] = {"color": green, "linestyle": "-"}
     hp_pump["plot_params"] = {"color": red, "linestyle": "-"}
-    components["mixer_from_hp"]["plot_params"] = {"color": purple, "linestyle": "--"}
-    components["mixer_from_lp"]["plot_params"] = {"color": purple, "linestyle": "--"}
+    components["mixer"]["stream_1"]["plot_params"] = {
+        "color": purple,
+        "linestyle": "--",
+    }
+    components["mixer"]["stream_2"]["plot_params"] = {
+        "color": purple,
+        "linestyle": "--",
+    }
 
     # Check for unused keys
     utilities.check_for_unused_keys(parameters, "parameters", raise_error=True)

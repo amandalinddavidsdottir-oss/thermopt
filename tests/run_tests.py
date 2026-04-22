@@ -10,5 +10,3 @@ tests_list = [
 # pytest.main(tests_list)
 # pytest.main(tests_list + [""])
 pytest.main(tests_list + ["-v"])
-
-

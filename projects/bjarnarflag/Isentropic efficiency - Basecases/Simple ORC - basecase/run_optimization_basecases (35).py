@@ -109,7 +109,7 @@ MODE = "optimize"  # "optimize" | "sweep" | "pcond_sweep" | "k_sensitivity" | "m
 # CONFIG_FILE = Path(__file__).with_name("Cis-2-Butene_transcriticalORC_basecase.yaml")
 
 # CONFIG_FILE = Path(__file__).with_name("Toluene_dp_twosource_basecase.yaml")
-CONFIG_FILE = Path(__file__).with_name("Toluene_dp_basecase.yaml")
+CONFIG_FILE = Path(__file__).with_name("Toluene_simple_basecase.yaml")
 
 
 # ──────────────────────────────────────────── batch ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────

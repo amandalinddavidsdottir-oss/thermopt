@@ -34,7 +34,9 @@ if not os.path.exists(DATA_FULLPATH):
 
         cycle = th.ThermodynamicCycleOptimization(CONFIG_FILE, out_dir=out_dir)
         # cycle.set_config_value("solver_options.max_iterations", 5)
-        cycle.set_config_value("problem_formulation.fixed_parameters.charging_power", power)
+        cycle.set_config_value(
+            "problem_formulation.fixed_parameters.charging_power", power
+        )
 
         # Enforce shared shaft constraints
         cycle.set_constraint(
@@ -53,7 +55,9 @@ if not os.path.exists(DATA_FULLPATH):
         # Optionally set efficiency to ideal to isolate power scaling
         for machine in ["expander", "compressor"]:
             for side in ["charge", "discharge"]:
-                var = f"problem_formulation.fixed_parameters.{machine}_{side}.efficiency"
+                var = (
+                    f"problem_formulation.fixed_parameters.{machine}_{side}.efficiency"
+                )
                 cycle.set_config_value(var, 1.0)
 
         cycle.run_optimization(x0=x0)
@@ -70,7 +74,6 @@ else:
     solvers = th.load_from_pickle(DATA_FULLPATH)
 
 
-
 # --------------------------------------------------------------------- #
 # Step 2: Plotting round-trip and isentropic efficiencies (2 subplots)
 # --------------------------------------------------------------------- #
@@ -82,7 +85,14 @@ x_vals = power_values / 1e6
 
 # --- Top plot: round-trip efficiency ---
 rte = [s.problem.cycle_data["energy_analysis"]["roundtrip_efficiency"] for s in solvers]
-ax1.plot(x_vals, 100 * np.array(rte), label="Round-trip efficiency", color="black", linewidth=2, marker="o")
+ax1.plot(
+    x_vals,
+    100 * np.array(rte),
+    label="Round-trip efficiency",
+    color="black",
+    linewidth=2,
+    marker="o",
+)
 ax1.set_ylabel("Round-trip efficiency (%)")
 ax1.grid(True, which="both", ls=":")
 # ax1.legend(fontsize=12, loc="lower right")
@@ -93,13 +103,15 @@ keys = [
     "compressor_charge",
     "compressor_discharge",
     "expander_charge",
-    "expander_discharge"
+    "expander_discharge",
 ]
+
 
 # Build LaTeX-style labels: η with subscript (machine) and superscript (flow direction)
 def make_eta_label(key):
     machine, direction = key.split("_")
     return rf"$\eta_{{\mathrm{{{machine}}}}}^{{\mathrm{{{direction}}}}}$"
+
 
 labels = [make_eta_label(k) for k in keys]
 
@@ -108,12 +120,23 @@ colors = plt.get_cmap("magma")(np.linspace(0.20, 0.80, len(keys)))
 
 for i, (key, label) in enumerate(zip(keys, labels)):
     eta_vals = [
-        solver.problem.cycle_data["components"][key]["data_out"]["isentropic_efficiency"] * 100
+        solver.problem.cycle_data["components"][key]["data_out"][
+            "isentropic_efficiency"
+        ]
+        * 100
         for solver in solvers
     ]
-    ax2.plot(x_vals, eta_vals, label=label, color=colors[i], marker=markers[i], linestyle="-", linewidth=1.5)
+    ax2.plot(
+        x_vals,
+        eta_vals,
+        label=label,
+        color=colors[i],
+        marker=markers[i],
+        linestyle="-",
+        linewidth=1.5,
+    )
 
-     
+
 ax2.set_xscale("log")
 ax2.set_xlabel("Charging power (MW)")
 ax2.set_ylabel("Isentropic efficiency (%)")
@@ -126,7 +149,7 @@ ax2.legend(
     frameon=True,
     ncol=2,
     handlelength=1.5,
-    columnspacing=0.8  # <-- reduce horizontal gap between columns
+    columnspacing=0.8,  # <-- reduce horizontal gap between columns
 )
 
 fig.tight_layout(pad=1)  # Reduce vertical padding
@@ -147,10 +170,12 @@ x_vals = power_values / 1e6  # Charging power in MW
 # Components to plot
 keys = ["compressor_charge", "compressor_discharge"]
 
+
 # LaTeX-style labels
 def make_speed_label(key):
     machine, direction = key.split("_")
     return rf"{direction.capitalize()} system"
+
 
 labels = [make_speed_label(k) for k in keys]
 markers = ["s", "o"]
@@ -159,7 +184,9 @@ colors = plt.get_cmap("magma")(np.linspace(0.3, 0.7, len(keys)))
 # Plot loop
 for i, (key, label) in enumerate(zip(keys, labels)):
     rpm_vals = [
-        solver.problem.cycle_data["components"][key]["data_out"]["angular_speed"] * 60 / (2 * np.pi)
+        solver.problem.cycle_data["components"][key]["data_out"]["angular_speed"]
+        * 60
+        / (2 * np.pi)
         for solver in solvers
     ]
     ax.plot(

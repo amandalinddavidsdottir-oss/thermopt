@@ -38,7 +38,9 @@ if not os.path.exists(DATA_FULLPATH):
             for i, p_max in enumerate(p_max_values):
                 print()
                 print(80 * "=")
-                print(f"{label.capitalize()} | efficiency = {eta:.2f} | p_max = {p_max/1e5:.1f} bar")
+                print(
+                    f"{label.capitalize()} | efficiency = {eta:.2f} | p_max = {p_max/1e5:.1f} bar"
+                )
                 print(80 * "=")
 
                 # Output dir
@@ -51,24 +53,30 @@ if not os.path.exists(DATA_FULLPATH):
 
                 # Set polytropic efficiencies
                 if label == "recompression":
-                    cycle.set_config_values({
-                        "problem_formulation.fixed_parameters.expander.efficiency": eta,
-                        "problem_formulation.fixed_parameters.main_compressor.efficiency": eta,
-                        "problem_formulation.fixed_parameters.split_compressor.efficiency": eta,
-                    })
+                    cycle.set_config_values(
+                        {
+                            "problem_formulation.fixed_parameters.expander.efficiency": eta,
+                            "problem_formulation.fixed_parameters.main_compressor.efficiency": eta,
+                            "problem_formulation.fixed_parameters.split_compressor.efficiency": eta,
+                        }
+                    )
                 else:
-                    cycle.set_config_values({
-                        "problem_formulation.fixed_parameters.compressor.efficiency": eta,
-                        "problem_formulation.fixed_parameters.expander.efficiency": eta,
-                    })
+                    cycle.set_config_values(
+                        {
+                            "problem_formulation.fixed_parameters.compressor.efficiency": eta,
+                            "problem_formulation.fixed_parameters.expander.efficiency": eta,
+                        }
+                    )
 
                 # Widen bounds on inlet pressure if needed
                 var = "problem_formulation.design_variables.expander_inlet_pressure"
-                cycle.set_config_values({
-                    f"{var}.min": 90e5,
-                    f"{var}.max": p_max * 1.1,
-                    # f"{var}.value": p_max * 1.0,
-                })
+                cycle.set_config_values(
+                    {
+                        f"{var}.min": 90e5,
+                        f"{var}.max": p_max * 1.1,
+                        # f"{var}.value": p_max * 1.0,
+                    }
+                )
 
                 # Apply equality constraint on expander inlet pressure
                 cycle.set_constraint(
@@ -101,14 +109,17 @@ colors = plt.get_cmap("magma")(np.linspace(0.2, 0.8, len(CONFIG_FILES)))
 
 for color_idx, (label, solver_lists) in enumerate(results.items()):
     for eta_idx, solvers in enumerate(solver_lists):
-        eff = [solver.problem.cycle_data["energy_analysis"]["cycle_efficiency"] for solver in solvers]
+        eff = [
+            solver.problem.cycle_data["energy_analysis"]["cycle_efficiency"]
+            for solver in solvers
+        ]
         ax.plot(
             p_max_values / 1e5,
             100 * np.array(eff),
             label=f"{label} ($\\eta = {int(efficiencies[eta_idx]*100)}$ %)",
             color=colors[color_idx],
             linestyle=linestyles[eta_idx],
-            marker="o"
+            marker="o",
         )
 
 ax.set_xlabel("Maximum cycle pressure (bar)")

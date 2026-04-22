@@ -24,6 +24,16 @@ import numpy as np
 import yaml
 
 
+def _eval_yaml_expr(value):
+    """Safely evaluate simple arithmetic expressions found in YAML config."""
+    if isinstance(value, str):
+        try:
+            return float(eval(value, {"__builtins__": {}}, {"np": np}))
+        except Exception:
+            return value
+    return float(value)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  MAIN ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════════════
@@ -63,7 +73,7 @@ def run_validation_checks(cycle, config_file=None, verbose=True):
 
     issues += _check_heat_flow_direction(energy, verbose)
     issues += _check_constraint_summary(components, energy, limits, verbose)
-    issues += _check_energy_balance(energy, verbose)
+    issues += _check_energy_balance(components, energy, verbose)
     issues += _check_state_phases(components, verbose)
 
     # ── Final verdict ──
@@ -320,7 +330,7 @@ def _check_constraint_summary(components, energy, limits, verbose):
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def _check_energy_balance(energy, verbose):
+def _check_energy_balance(components, energy, verbose):
     """Check first-law energy balance: Q_in = W_net_system + W_aux + Q_out.
 
     W_net_system already has auxiliary pump power deducted, so W_aux must be
@@ -334,9 +344,13 @@ def _check_energy_balance(energy, verbose):
     Q_in = energy.get("total_heat_input", energy.get("heater_heat_flow", 0))
     Q_out = abs(energy.get("cooler_heat_flow", 0))
     W_net = energy.get("net_system_power", energy.get("net_cycle_power", 0))
-    W_aux = energy.get("heat_source_pump_power", 0) + energy.get(
-        "heat_sink_pump_power", 0
+    hs_pump = components.get(
+        "heat_source_pump", components.get("heat_source_pump_hp", None)
     )
+    W_hs = hs_pump["energy_analysis"]["power"] if hs_pump else 0
+    if "heat_source_pump_lp" in components:
+        W_hs += components["heat_source_pump_lp"]["energy_analysis"]["power"]
+    W_aux = W_hs + components["heat_sink_pump"]["energy_analysis"]["power"]
 
     residual = Q_in - (W_net + W_aux + Q_out)
     pct = abs(residual) / abs(Q_in) * 100 if Q_in != 0 else 0
@@ -490,6 +504,60 @@ def _check_state_phases(components, verbose):
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+def _check_design_variable_bounds(cycle, config_file, verbose):
+    """Check that all converged design variables are within their YAML bounds."""
+    issues = 0
+
+    print()
+    print("  ── Check 5: Design Variable Bounds ──")
+    print(f"    {'Variable':<40s} {'Value':>14s} {'Min':>12s} {'Max':>12s}  {'Status'}")
+    print("    " + "─" * 84)
+
+    try:
+        with open(config_file, "r") as f:
+            cfg = yaml.safe_load(f)
+    except (OSError, yaml.YAMLError):
+        print("    ⚠ Could not read config file — bounds check skipped")
+        return 0
+
+    dvs = cfg.get("problem_formulation", {}).get("design_variables", {})
+    x_dict = cycle.problem.x0_dict
+
+    for name, val in x_dict.items():
+        if name not in dvs:
+            continue
+        entry = dvs[name]
+        lo = entry.get("min", None)
+        hi = entry.get("max", None)
+        if lo is None and hi is None:
+            continue
+
+        lo_val = _eval_yaml_expr(lo) if lo is not None else None
+        hi_val = _eval_yaml_expr(hi) if hi is not None else None
+        tol = 1e-6
+
+        lo_str = f"{lo_val:.4g}" if lo_val is not None else "—"
+        hi_str = f"{hi_val:.4g}" if hi_val is not None else "—"
+
+        if lo_val is not None and val < lo_val - tol:
+            status = "⚠ BELOW MIN"
+            issues += 1
+        elif hi_val is not None and val > hi_val + tol:
+            status = "⚠ ABOVE MAX"
+            issues += 1
+        elif lo_val is not None and abs(val - lo_val) < tol * max(1, abs(lo_val)):
+            status = "AT LOWER BOUND"
+        elif hi_val is not None and abs(val - hi_val) < tol * max(1, abs(hi_val)):
+            status = "AT UPPER BOUND"
+        else:
+            status = "within bounds"
+
+        if verbose or "BOUND" in status or "⚠" in status:
+            print(f"    {name:<40s} {val:>14.4g} {lo_str:>12s} {hi_str:>12s}  {status}")
+
+    return issues
+
+
 def _print_expander_summary(exp, label="Expander"):
     """Print turbine summary and verification for a single expander."""
     eff_type = exp.get("efficiency_type", "isentropic")
@@ -497,12 +565,18 @@ def _print_expander_summary(exp, label="Expander"):
     state_in = exp["state_in"]
     state_out = exp["state_out"]
     m_dot = exp.get("mass_flow", float("nan"))
+    n_parallel = exp.get("n_turbines_parallel", 1)
 
     print("\n" + "=" * 76)
     print(f"  TURBINE SUMMARY — {label}")
     print("=" * 76)
     print(f"  Fluid              : {exp.get('fluid_name', 'unknown')}")
-    print(f"  Mass flow rate     : {m_dot:.3f} kg/s")
+    if n_parallel > 1:
+        print(f"  Configuration      : {n_parallel} turbines in parallel")
+        print(f"  Mass flow (total)  : {m_dot:.3f} kg/s")
+        print(f"  Mass flow (per shaft): {m_dot / n_parallel:.3f} kg/s")
+    else:
+        print(f"  Mass flow rate     : {m_dot:.3f} kg/s")
     print(
         f"  Inlet  (p, T)      : {state_in.p/1e5:.2f} bar,  "
         f"{state_in.T - 273.15:.1f} °C"
@@ -515,10 +589,12 @@ def _print_expander_summary(exp, label="Expander"):
     print(f"  Dh_is              : {exp['isentropic_work']/1e3:.2f} kJ/kg")
     print(f"  Specific work      : {exp['specific_work']/1e3:.2f} kJ/kg")
 
-    W_gross = m_dot * exp["specific_work"]
-    W_is = m_dot * exp["isentropic_work"]
+    W_gross = exp["power"]  # already summed across all parallel shafts
+    W_is = (m_dot / n_parallel) * exp["isentropic_work"] * n_parallel
     print(f"  W_is               : {W_is/1e3:.1f} kW")
     print(f"  W_actual           : {W_gross/1e3:.1f} kW")
+    if n_parallel > 1:
+        print(f"  W_actual (per shaft): {W_gross/n_parallel/1e3:.1f} kW")
     print("-" * 76)
 
     if eff_type == "astolfi-stacking":
@@ -673,9 +749,13 @@ def get_validation_data(cycle, config_file=None):
     Q_in = float(energy.get("total_heat_input", energy.get("heater_heat_flow", 0)))
     Q_out = float(abs(energy.get("cooler_heat_flow", 0)))
     W_net = float(energy.get("net_system_power", energy.get("net_cycle_power", 0)))
-    W_aux = float(energy.get("heat_source_pump_power", 0)) + float(
-        energy.get("heat_sink_pump_power", 0)
+    hs_pump = components.get(
+        "heat_source_pump", components.get("heat_source_pump_hp", None)
     )
+    W_hs = float(hs_pump["energy_analysis"]["power"]) if hs_pump else 0.0
+    if "heat_source_pump_lp" in components:
+        W_hs += float(components["heat_source_pump_lp"]["energy_analysis"]["power"])
+    W_aux = W_hs + float(components["heat_sink_pump"]["energy_analysis"]["power"])
     residual = Q_in - (W_net + W_aux + Q_out)
     pct = abs(residual) / abs(Q_in) * 100 if Q_in != 0 else 0
 

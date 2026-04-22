@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import argparse
 
+
 def get_package_name(pyproject_path="../pyproject.toml"):
     pyproject = toml.load(pyproject_path)
     return pyproject["tool"]["poetry"]["name"]
@@ -34,7 +35,7 @@ def run_sphinx_apidoc(output_dir, src_dir, exclude=None, force=False):
     - source_dir (str): Directory where the source files reside.
     - output_dir (str): Directory to which the API documentation should be output.
     - module_path (str): Path to the module that should be documented.
-    - extensions (list of str, optional): List of extensions to pass to the sphinx-apidoc command. 
+    - extensions (list of str, optional): List of extensions to pass to the sphinx-apidoc command.
                                           Default is ['-e'].
 
     Raises:
@@ -48,12 +49,12 @@ def run_sphinx_apidoc(output_dir, src_dir, exclude=None, force=False):
         for exclude_item in exclude:
             cmd.append(f"{src_dir}/{exclude_item}")
 
-    cmd.append("-e") # put documentation for each module on its own page
-    cmd.append('--no-toc') # Do not create a table of contents file
-    cmd.append("-M") # Module first
+    cmd.append("-e")  # put documentation for each module on its own page
+    cmd.append("--no-toc")  # Do not create a table of contents file
+    cmd.append("-M")  # Module first
 
     if force:
-        cmd.append("-f") # Force overwriting on any existing generated files
+        cmd.append("-f")  # Force overwriting on any existing generated files
 
     subprocess.check_call(cmd)
     print("Sphinx apidoc completed successfully.")
@@ -85,19 +86,19 @@ def run_sphinx_autobuild(docs_dir=".", build_dir="_build", port=8000):
     - port (int): Port to serve HTML.
     """
     cmd = [
-        "python", "-m", "sphinx_autobuild",
+        "python",
+        "-m",
+        "sphinx_autobuild",
         docs_dir,
         build_dir,
         "--open-browser",
-        "--port", str(port),
+        "--port",
+        str(port),
     ]
     subprocess.check_call(cmd)
 
 
-
-EXCLUDE_MODULES = [
-    ""
-]
+EXCLUDE_MODULES = [""]
 
 if __name__ == "__main__":
 
@@ -111,14 +112,21 @@ if __name__ == "__main__":
 
     # Create API reference
     source_path = f"../{get_package_name()}"  # now dynamic
-    run_sphinx_apidoc(output_dir="source/api/", src_dir=source_path, exclude=EXCLUDE_MODULES)
+    run_sphinx_apidoc(
+        output_dir="source/api/", src_dir=source_path, exclude=EXCLUDE_MODULES
+    )
 
     # Build documentation
-    parser = argparse.ArgumentParser(description="Build or preview Sphinx documentation.")
-    parser.add_argument("--no-autobuild", action="store_true", help="Disable live preview (sphinx-autobuild) and use sphinx-build instead.")
+    parser = argparse.ArgumentParser(
+        description="Build or preview Sphinx documentation."
+    )
+    parser.add_argument(
+        "--no-autobuild",
+        action="store_true",
+        help="Disable live preview (sphinx-autobuild) and use sphinx-build instead.",
+    )
     args = parser.parse_args()
     if args.no_autobuild:  # For GitHub action
         run_sphinx_build(docs_dir=".", build_dir="_build")
     else:  # For local development
         run_sphinx_autobuild(docs_dir=".", build_dir="_build")
-

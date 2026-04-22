@@ -25,6 +25,7 @@ jaxprop = "^0.4.1"
 #jaxprop = { path = "../jaxprop/", develop = true }
 #pysolver_view = { path = "../pysolver_view/", develop = true }
 #coolpropx = { path = "../coolpropx/", develop = true }
+adjusttext = "^1.3.0"
 
 [tool.poetry.group.dev.dependencies]
 ipython = ">=8.13,<8.17"

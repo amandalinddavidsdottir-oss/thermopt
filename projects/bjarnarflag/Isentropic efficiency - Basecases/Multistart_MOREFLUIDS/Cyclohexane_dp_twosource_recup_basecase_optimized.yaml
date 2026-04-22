@@ -1,0 +1,321 @@
+solver_options:
+  library: scipy
+  method: slsqp
+  derivative_method: 2-point
+  derivative_abs_step: 1e-6
+  print_convergence: true
+  plot_convergence: false
+  logger: None
+  update_on: gradient
+  tolerance: 1e-6
+  max_iterations: 100
+  problem_scale: 20
+  callbacks:
+    save_plot: False #this was true, but not in multistart runs
+    save_config: False #this was true, but not in multistart runs
+    save_report: False #this was true, but not in multistart runs
+    plot_cycle: False #this was true, but not in multistart runs
+    plot_convergence: false
+
+problem_formulation:
+  cycle_topology: recuperated_dual_pressure_dual_brine
+
+  plot_settings:
+    pinch_point_diagram: false
+    fluid:
+      plot_saturation_line: true
+      plot_critical_point: true
+      plot_quality_isolines: true
+      plot_pseudocritical_line: false
+      plot_triple_point_liquid: false
+      plot_triple_point_vapor: false
+    diagrams:
+    - x_prop: s
+      y_prop: T
+      x_scale: linear
+      y_scale: linear
+      plot_heat_source: true     # set to False to hide the brine line
+      plot_heat_sink: true       # set to False to hide the cooling water line
+
+  fixed_parameters:
+    working_fluid:
+      name: Cyclohexane
+      backend: HEOS
+      exceptions: true
+    heating_fluid:
+      name: water
+      backend: HEOS
+      exceptions: true
+    cooling_fluid:
+      name: water
+      backend: HEOS
+      exceptions: true
+    special_points:
+      ambient_pressure: 101325
+      ambient_temperature: 20.0 + 273.15
+      maximum_temperature: 512.03 # K = 238.88°C — HP brine (243.88°C) minus 5K pinch
+
+    # ── Two-source mode: HP and LP brine streams kept separate ──
+    # HP brine: well 2 only — T_sat = 243.88°C, h = 1845.8 kJ/kg, 
+    heat_source_hp:
+      inlet_enthalpy: 1845800       # J/kg
+      inlet_pressure: 3581300       # Pa  (34.8 bar-g = 35.813 bar-a)
+      exit_pressure: 3581300        # Pa  (reinjection back to well pressure)
+      minimum_temperature: 373.15   # K   (100°C reinjection limit)
+
+    # LP brine: wells 1, 3, 4 mixed — T_sat = 207.15°C, h_mix = 1382.08 kJ/kg,
+    heat_source_lp:
+      inlet_enthalpy: 1382080       # J/kg
+      inlet_pressure: 1801300       # Pa  (17.0 bar-g = 18.013 bar-a)
+      exit_pressure: 1801300        # Pa  (reinjection back to well pressure)
+      minimum_temperature: 373.15   # K   (100°C reinjection limit)
+
+    # Fixed fraction of total brine mass flow supplied by the HP brine source.
+    # The LP brine source supplies the remaining (1 - hp_well_fraction).
+    # This fraction is fixed based on the physical well capacities at Bjarnarflag
+    # and is not a design variable — the optimizer controls only the total brine
+    # mass flow rate (well_mass_flow_rate_total), while the HP/LP split is
+    # preserved by construction.
+    hp_well_fraction: 0.2
+
+    heat_sink:
+      inlet_temperature: 295.15
+      inlet_pressure: 101325
+      exit_pressure: 101325
+
+    # Three brine-side heat exchangers
+    hp_evaporator:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+    lp_evaporator:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+    preheater:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+    cooler:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+
+    # Recuperator heat exchanger
+    recuperator:
+      pressure_drop_hot_side: 0.01
+      pressure_drop_cold_side: 0.01
+      num_elements: 25
+
+    # Two expanders
+    hp_expander:
+      efficiency: 0.90
+      efficiency_type: "isentropic"
+    lp_expander:
+      efficiency: 0.90
+      efficiency_type: "isentropic"
+      n_turbines_parallel: 2 #Two turbines in parallel
+
+    # Two ORC-side pumps
+    lp_pump:
+      efficiency: 0.85
+      efficiency_type: "isentropic"
+    hp_pump:
+      efficiency: 0.85
+      efficiency_type: "isentropic"
+
+    # Two brine reinjection pumps (one per stream)
+    heat_source_pump_hp:
+      efficiency: 0.80
+      efficiency_type: "isentropic"
+    heat_source_pump_lp:
+      efficiency: 0.80
+      efficiency_type: "isentropic"
+
+    heat_sink_pump:
+      efficiency: 0.80
+      efficiency_type: "isentropic"
+
+  design_variables:
+
+    mass_split_fraction:
+      min: 0.01
+      max: 0.99
+      value: 0.257720742777      
+
+    mass_flow_rate_cycle:
+      min: 20.0
+      max: 1500.0
+      value: 288.99948262349                
+
+    mass_flow_rate_sink:
+      min: 100.0
+      max: 20000.0
+      value: 5477.351324371455               
+
+    well_mass_flow_rate_total:
+      min: 1.0
+      max: 600.0
+      value: 151.565910174305                
+
+    # Brine exit temperatures defined as fractions — ordering guaranteed by construction:
+    #   HP stream: T_reinjection_hp <= T_hp_evap_exit <= T_hp_brine_inlet
+    #   LP stream: T_reinjection_lp <= T_preheater_exit <= T_lp_evap_exit <= T_lp_brine_inlet
+    # fraction=0: brine exits at reinjection limit, fraction=1: brine exits at upstream temperature
+    heat_source_hp_evap_exit_temperature_fraction:
+      min: 0.01
+      max: 0.99
+      value: 0.01                  
+
+    heat_source_lp_evap_exit_temperature_fraction:
+      min: 0.01
+      max: 0.99
+      value: 0.111658848672       
+
+    heat_source_preheater_exit_temperature_fraction:
+      min: 0.01
+      max: 0.99
+      value: 0.01                  
+
+    heat_sink_exit_temperature:
+      min: 300.15
+      max: 315.15
+      value: 300.15               
+
+    compressor_inlet_pressure:
+      min: 1*$working_fluid.liquid_at_ambient_temperature.p
+      max: 6.0*$working_fluid.liquid_at_ambient_temperature.p
+      value: 17373.072969813984               
+
+    compressor_inlet_enthalpy:
+      min: 0.0*($working_fluid.critical_point.h - 
+        $working_fluid.liquid_at_ambient_temperature.h) + 
+        $working_fluid.liquid_at_ambient_temperature.h
+      max: 0.5*($working_fluid.critical_point.h - 
+        $working_fluid.liquid_at_ambient_temperature.h) + 
+        $working_fluid.liquid_at_ambient_temperature.h
+      value: -100631.01095811659             
+
+    preheater_outlet_enthalpy:
+      min: 0.0*($working_fluid.critical_point.h - 
+        $working_fluid.liquid_at_ambient_temperature.h) + 
+        $working_fluid.liquid_at_ambient_temperature.h
+      max: 1*($working_fluid.critical_point.h - 
+        $working_fluid.liquid_at_ambient_temperature.h) + 
+        $working_fluid.liquid_at_ambient_temperature.h
+      value: 34050.1189680245             
+                                   
+
+    # Intermediate (LP) expander inlet pressure, defined as a fraction between
+    # condensation pressure (fraction=0) and evaporation pressure (fraction=1):
+    #
+    #   p_lp = fraction * p_cond + (1 - fraction) * p_evap
+    #
+    # This way, any initial guess used in multistart will always give a pressure
+    # that is between p_cond and p_evap, so LP < HP is always satisfied from
+    # the start without needing an explicit ordering constraint.
+    lp_expander_inlet_pressure_fraction:
+      min: 0.01
+      max: 0.99
+      value: 0.382053216701              
+                                   
+
+    lp_evaporator_outlet_enthalpy:
+      min: 0.0*($working_fluid.gas_at_maximum_temperature.h - 
+        $working_fluid.liquid_at_ambient_temperature.h) + 
+        $working_fluid.liquid_at_ambient_temperature.h
+      max: 1*($working_fluid.gas_at_maximum_temperature.h  - 
+        $working_fluid.liquid_at_ambient_temperature.h) + 
+        $working_fluid.liquid_at_ambient_temperature.h
+      value: 549073.97997658             
+                                   
+
+    hp_expander_inlet_pressure:
+      min: $working_fluid.liquid_at_ambient_temperature.p
+      max: 2*$working_fluid.critical_point.p
+      value: 2223638.572324115             
+                                  
+
+    hp_expander_inlet_enthalpy:
+      min: 0.0*($working_fluid.gas_at_maximum_temperature.h - 
+        $working_fluid.liquid_at_ambient_temperature.h) + 
+        $working_fluid.liquid_at_ambient_temperature.h
+      max: 1*($working_fluid.gas_at_maximum_temperature.h  - 
+        $working_fluid.liquid_at_ambient_temperature.h) + 
+        $working_fluid.liquid_at_ambient_temperature.h
+      value: 612578.1723864311             
+                                   
+
+    # recuperator_effectiveness:
+    #   min: 0.0
+    #   max: 0.95
+    #   value: 0.613846840447              
+    recuperator_cold_outlet_enthalpy:
+      min: 0.0*($working_fluid.gas_at_maximum_temperature.h -
+        $working_fluid.liquid_at_ambient_temperature.h) +
+        $working_fluid.liquid_at_ambient_temperature.h
+      max: 1*($working_fluid.gas_at_maximum_temperature.h  -
+        $working_fluid.liquid_at_ambient_temperature.h) +
+        $working_fluid.liquid_at_ambient_temperature.h
+      value: 13077.263867915666     # updated from optimal_solution.yaml
+
+
+  constraints:
+    # Pinch points for all three brine-side HXs
+  - variable: $components.hp_evaporator.temperature_difference
+    type: ">"
+    value: 5
+    normalize: true
+
+  - variable: $components.lp_evaporator.temperature_difference
+    type: ">"
+    value: 5
+    normalize: true
+
+  - variable: $components.preheater.temperature_difference
+    type: ">"
+    value: 5
+    normalize: true
+
+  - variable: $components.cooler.temperature_difference
+    type: ">"
+    value: 5
+    normalize: true
+
+  - variable: $components.recuperator.temperature_difference
+    type: ">"
+    value: 5
+    normalize: true
+
+    # Subcooling at pump inlet
+  - variable: $components.lp_pump.state_in.subcooling
+    type: ">"
+    value: 1.0
+    normalize: true
+
+  - variable: $components.hp_pump.state_in.subcooling
+    type: ">"
+    value: 1.0
+    normalize: true
+
+    # Superheating at HP expander inlet
+  - variable: $components.hp_expander.state_in.superheating
+    type: ">"
+    value: 5
+    normalize: true
+
+    # Superheating at LP expander inlet
+  - variable: $components.lp_expander.state_in.superheating
+    type: ">"
+    value: 5
+    normalize: true
+
+    # ── Power output target ──
+  - variable: $energy_analysis.net_system_power
+    type: "="
+    value: 45000000    # W (= 45 MW)
+    normalize: true
+
+  objective_function:
+    variable: $energy_analysis.system_efficiency
+    type: maximize

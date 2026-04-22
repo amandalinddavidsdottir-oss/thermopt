@@ -21,4 +21,3 @@ cycle.plot_convergence_history()
 
 # Keep plots open
 plt.show()
-

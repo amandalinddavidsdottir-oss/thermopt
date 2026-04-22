@@ -12,13 +12,17 @@ df = pd.read_excel(file_path, sheet_name="cycle_states", header=0, skiprows=[1])
 df = df[df["state"].str.endswith(("_in", "_out"))].copy()
 
 # Extract component and location
-df["component"] = df["state"].str.extract(r"(.+)_in|(.+)_out")[0].combine_first(
-    df["state"].str.extract(r"(.+)_in|(.+)_out")[1]
+df["component"] = (
+    df["state"]
+    .str.extract(r"(.+)_in|(.+)_out")[0]
+    .combine_first(df["state"].str.extract(r"(.+)_in|(.+)_out")[1])
 )
 df["location"] = df["state"].str.extract(r".*_(in|out)")
 
 # Create variable label
-df["Variable"] = (df["component"] + " " + df["location"]).str.replace("_", " ").str.capitalize()
+df["Variable"] = (
+    (df["component"] + " " + df["location"]).str.replace("_", " ").str.capitalize()
+)
 
 # Convert units
 df["Pressure (bar)"] = df["pressure"] / 1e5
@@ -33,9 +37,11 @@ df_out = df[columns]
 charge_df = df_out[df_out["Variable"].str.contains("charge")]
 discharge_df = df_out[df_out["Variable"].str.contains("discharge")]
 
+
 # Format helper
 def fmt(x):
     return f"{x:.3f}" if isinstance(x, (float, int, np.floating)) else str(x)
+
 
 # Header
 lines = []

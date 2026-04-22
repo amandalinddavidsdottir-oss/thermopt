@@ -51,11 +51,15 @@ with open(OUTPUT_FILE, "w") as f:
     # Split keys
     charge_keys = sorted(
         [k for k in energy if k.endswith("_charge") and all(s not in k for s in skip)],
-        key=sort_key
+        key=sort_key,
     )
     discharge_keys = sorted(
-        [k for k in energy if k.endswith("_discharge") and all(s not in k for s in skip)],
-        key=sort_key
+        [
+            k
+            for k in energy
+            if k.endswith("_discharge") and all(s not in k for s in skip)
+        ],
+        key=sort_key,
     )
 
     # Header

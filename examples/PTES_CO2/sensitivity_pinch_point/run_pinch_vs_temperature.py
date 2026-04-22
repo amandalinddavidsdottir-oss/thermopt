@@ -27,7 +27,6 @@ hot_temperatures = np.array([400, 500, 600, 700, 800]) + 273.15  # K
 # hot_temperatures = np.array([600]) + 273.15  # K
 
 
-
 # --------------------------------------------------------------------- #
 # Step 1: Run simulations if data file does not exist
 # --------------------------------------------------------------------- #
@@ -43,7 +42,9 @@ if not os.path.exists(DATA_FULLPATH):
         for i, pinch in enumerate(pinch_deltas):
             print()
             print("-" * 80)
-            print(f"Hot storage temp: {T_hot - 273.15:.1f} degC, Pinch point: {pinch:.1f} degC")
+            print(
+                f"Hot storage temp: {T_hot - 273.15:.1f} degC, Pinch point: {pinch:.1f} degC"
+            )
             print("-" * 80)
 
             # Output folder
@@ -58,19 +59,25 @@ if not os.path.exists(DATA_FULLPATH):
             cycle.set_config_value("solver_options.callbacks.plot_cycle", False)
 
             # Set hot storage temperature limits and constraint for target
-            cycle.set_config_values({
-                "problem_formulation.design_variables.hot_storage_lower_temperature.value": T_hot-100,
-                "problem_formulation.design_variables.hot_storage_lower_temperature.min": 200+273.15,
-                "problem_formulation.design_variables.hot_storage_lower_temperature.max": 1000+273.15,
-                "problem_formulation.design_variables.hot_storage_upper_temperature.value": T_hot,
-                "problem_formulation.design_variables.hot_storage_upper_temperature.min": 200+273.15,
-                "problem_formulation.design_variables.hot_storage_upper_temperature.max": 1000+273.15,
-                "problem_formulation.design_variables.expander_inlet_enthalpy_charge.value": "1.3*$working_fluid.critical_point.h",
-                "problem_formulation.design_variables.compressor_inlet_enthalpy_discharge.value": "1.3*$working_fluid.critical_point.h",
-                # "problem_formulation.design_variables.expander_inlet_pressure_charge.max": 500e5,
-                # "problem_formulation.design_variables.expander_inlet_pressure_discharge.max": 500e5,
-
-            })
+            cycle.set_config_values(
+                {
+                    "problem_formulation.design_variables.hot_storage_lower_temperature.value": T_hot
+                    - 100,
+                    "problem_formulation.design_variables.hot_storage_lower_temperature.min": 200
+                    + 273.15,
+                    "problem_formulation.design_variables.hot_storage_lower_temperature.max": 1000
+                    + 273.15,
+                    "problem_formulation.design_variables.hot_storage_upper_temperature.value": T_hot,
+                    "problem_formulation.design_variables.hot_storage_upper_temperature.min": 200
+                    + 273.15,
+                    "problem_formulation.design_variables.hot_storage_upper_temperature.max": 1000
+                    + 273.15,
+                    "problem_formulation.design_variables.expander_inlet_enthalpy_charge.value": "1.3*$working_fluid.critical_point.h",
+                    "problem_formulation.design_variables.compressor_inlet_enthalpy_discharge.value": "1.3*$working_fluid.critical_point.h",
+                    # "problem_formulation.design_variables.expander_inlet_pressure_charge.max": 500e5,
+                    # "problem_formulation.design_variables.expander_inlet_pressure_discharge.max": 500e5,
+                }
+            )
             # cycle.set_config_values({
             #     "problem_formulation.design_variables.hot_storage_lower_temperature.value": T_hot - 100,
             #     "problem_formulation.design_variables.hot_storage_lower_temperature.min": T_hot - 105,
@@ -91,7 +98,9 @@ if not os.path.exists(DATA_FULLPATH):
             for hx in ["heater", "cooler", "recuperator"]:
                 for side in ["charge", "discharge"]:
                     var = f"$components.{hx}_{side}.temperature_difference"
-                    cycle.set_constraint(variable=var, type=">", value=pinch, normalize=10.0)
+                    cycle.set_constraint(
+                        variable=var, type=">", value=pinch, normalize=10.0
+                    )
 
             # Run and save
             cycle.run_optimization(x0=x0)
@@ -126,7 +135,7 @@ for i, T_hot in enumerate(hot_temperatures):
         for solver in solvers[i]
     ]
 
-        # Filter for pinch_deltas >= 5
+    # Filter for pinch_deltas >= 5
     pinch_deltas_filtered = [d for d in pinch_deltas if d >= 5]
     rte_filtered = [r for d, r in zip(pinch_deltas, rte) if d >= 5]
 
