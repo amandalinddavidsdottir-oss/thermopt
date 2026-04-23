@@ -114,7 +114,7 @@ warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
 #                  is overwritten. A summary table is printed at the end.
 #                  → Set BATCH_YAML_FILES.
 #
-MODE = "parametric_study"  # options: sweep | pcond_sweep | k_sensitivity | multistart | parametric_study | batch
+MODE = "optimize"  # options: sweep | pcond_sweep | k_sensitivity | multistart | parametric_study | batch
 
 
 # ────────────────────────────────────────── optimize & sweep ─────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -148,16 +148,23 @@ CONFIG_FILE = Path(__file__).with_name(
 # Used by: batch
 # List of YAML files to optimize in sequence. Each file is run independently
 # with full post-processing. Results go into each YAML's own output folder.
+
 BATCH_YAML_FILES = [
-    Path(__file__).with_name("Toluene_simple_basecase_optimized.yaml"),
-    Path(__file__).with_name("Toluene_recup_basecase_optimized.yaml"),
-    Path(__file__).with_name("Toluene_dp_basecase_optimized.yaml"),
-    Path(__file__).with_name("Toluene_dp_recup_basecase_optimized.yaml"),
-    Path(__file__).with_name("Toluene_dp_twosource_basecase_optimized.yaml"),
-    Path(__file__).with_name("Toluene_dp_twosource_recup_basecase_optimized.yaml"),
-    Path(__file__).with_name("Recup_basecase - transcritical_optimized.yaml"),
-    Path(__file__).with_name("Simple_basecase - transcritical_optimized.yaml"),
+    Path(__file__).with_name("Toluene_recup_basecase_optimized_Macchi (3).yaml"),
+    Path(__file__).with_name("Cyclohexane_recup_basecase_optimized_Macchi.yaml"),
+    Path(__file__).with_name("Isopentane_recup_basecase_optimized_Macchi.yaml"),
 ]
+
+# BATCH_YAML_FILES = [
+#     Path(__file__).with_name("Toluene_simple_basecase_optimized.yaml"),
+#     Path(__file__).with_name("Toluene_recup_basecase_optimized.yaml"),
+#     Path(__file__).with_name("Toluene_dp_basecase_optimized.yaml"),
+#     Path(__file__).with_name("Toluene_dp_recup_basecase_optimized.yaml"),
+#     Path(__file__).with_name("Toluene_dp_twosource_basecase_optimized.yaml"),
+#     Path(__file__).with_name("Toluene_dp_twosource_recup_basecase_optimized.yaml"),
+#     Path(__file__).with_name("Recup_basecase - transcritical_optimized.yaml"),
+#     Path(__file__).with_name("Simple_basecase - transcritical_optimized.yaml"),
+# ]
 
 # BATCH_YAML_FILES = [
 #     Path(__file__).with_name("Recup_basecase - transcritical_optimized.yaml"),
@@ -254,7 +261,7 @@ PARAMETRIC_BASE_YAMLS = [
 PARAMETRIC_N_WORKERS = 4
 
 # n_stages outer loop — goes from 1 upward (variables are ADDED each step).
-PARAMETRIC_N_STAGES_LIST = [2, 3, 4, 5]  # n=1 excluded: at Bjarnarflag conditions
+PARAMETRIC_N_STAGES_LIST = [1, 2, 3, 4, 5]  # n=1 excluded: at Bjarnarflag conditions
 # a single stage gives Vr >> 5 (full pressure ratio ~127), making it physically
 # infeasible regardless of RPM. The optimizer only "converges" for n=1 by
 # collapsing to a low-efficiency local minimum that contaminates transition_vars
@@ -2107,7 +2114,7 @@ def run_parametric_nstages_rpm(
                 # This is the canonical reference solution — 2 turbines at 1500 RPM
                 # gives the best warmstart for the next n_stages block and
                 # serves as the reset point for (1500,4), (3000,4), (3000,6).
-                if converged and rpm == 1500 and n_turb == 2:
+                if converged and rpm == 1500 and n_turb == 2 and n_stages > 1:  # skip n=1 — degenerate local min would contaminate transition_vars
                     transition_vars = dict(warm_vars)
                     rpm1500_vars = dict(warm_vars)
 

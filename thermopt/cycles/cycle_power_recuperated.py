@@ -372,9 +372,9 @@ def evaluate_cycle(
 
     _aux_pump_names = {"heat_source_pump", "heat_sink_pump"}
 
-    E_fuel = heater["exergy_analysis"]["E_fuel"]
+    E_fuel_system = heater["exergy_analysis"]["E_fuel"]
 
-    E_product = energy_analysis["net_system_power"]
+    E_product_system = energy_analysis["net_system_power"]
 
     E_loss_cooler = cooler["exergy_analysis"]["E_product"]
 
@@ -385,15 +385,15 @@ def evaluate_cycle(
         if name not in _aux_pump_names
     )
 
-    eta_exergy = E_product / E_fuel if E_fuel != 0 else 0.0
+    eta_exergy = E_product_system / E_fuel_system if E_fuel_system != 0 else 0.0
 
-    balance_residual = E_fuel - (W_net + E_D_internal + E_loss_cooler)
+    balance_residual = E_fuel_system - (W_net + E_D_internal + E_loss_cooler)
 
     exergy_analysis = {
         "T0": T0,
         "p0": p0,
-        "E_fuel": E_fuel,
-        "E_product": E_product,
+        "E_fuel_system": E_fuel_system,
+        "E_product_system": E_product_system,
         "E_loss_cooler": E_loss_cooler,
         "E_D_total": E_D_total,
         "E_D_internal": E_D_internal,

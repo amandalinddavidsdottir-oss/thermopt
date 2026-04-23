@@ -181,13 +181,9 @@ def heat_exchanger(
     # Specific flow exergies — ensure physical inlet/outlet ordering
     hot_in = hot_side["state_in"]
     hot_out = hot_side["state_out"]
-    if hot_in.T < hot_out.T:
-        hot_in, hot_out = hot_out, hot_in
-
     cold_in = cold_side["state_in"]
     cold_out = cold_side["state_out"]
-    if cold_in.T > cold_out.T:
-        cold_in, cold_out = cold_out, cold_in
+
 
     e_hot_in = _specific_flow_exergy(hot_in.h, hot_in.s, h0_hot, s0_hot, T0)
     e_hot_out = _specific_flow_exergy(hot_out.h, hot_out.s, h0_hot, s0_hot, T0)

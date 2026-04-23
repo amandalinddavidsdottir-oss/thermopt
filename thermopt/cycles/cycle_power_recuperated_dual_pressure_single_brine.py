@@ -169,10 +169,25 @@ def evaluate_cycle(
         if "RPM" in parameters["hp_expander"]:
             hp_exp_data_in["RPM"] = parameters["hp_expander"].pop("RPM")
         hp_intermediate_pressures = []
+        hp_intermediate_ratios = []
         for i in range(1, 10):
-            key = f"hp_expander_intermediate_pressure_{i}"
-            if key in variables:
-                hp_intermediate_pressures.append(variables.pop(key))
+            p_key = f"hp_expander_intermediate_pressure_{i}"
+            r_key = f"hp_expander_intermediate_ratio_{i}"
+            if p_key in variables and r_key in variables:
+                raise ValueError(
+                    f"Both '{p_key}' and '{r_key}' are declared as design "
+                    f"variables. Use exactly one parameterization per stage."
+                )
+            if p_key in variables:
+                hp_intermediate_pressures.append(variables.pop(p_key))
+            elif r_key in variables:
+                hp_intermediate_ratios.append(variables.pop(r_key))
+        if hp_intermediate_ratios:
+            p_prev = hp_expander_inlet_p
+            for r in hp_intermediate_ratios:
+                p_i = hp_exp_outlet_p * (p_prev / hp_exp_outlet_p) ** r
+                hp_intermediate_pressures.append(p_i)
+                p_prev = p_i
         if hp_intermediate_pressures:
             hp_exp_data_in["intermediate_pressures"] = hp_intermediate_pressures
 
@@ -233,10 +248,25 @@ def evaluate_cycle(
         if "RPM" in parameters["lp_expander"]:
             lp_exp_data_in["RPM"] = parameters["lp_expander"].pop("RPM")
         lp_intermediate_pressures = []
+        lp_intermediate_ratios = []
         for i in range(1, 10):
-            key = f"lp_expander_intermediate_pressure_{i}"
-            if key in variables:
-                lp_intermediate_pressures.append(variables.pop(key))
+            p_key = f"lp_expander_intermediate_pressure_{i}"
+            r_key = f"lp_expander_intermediate_ratio_{i}"
+            if p_key in variables and r_key in variables:
+                raise ValueError(
+                    f"Both '{p_key}' and '{r_key}' are declared as design "
+                    f"variables. Use exactly one parameterization per stage."
+                )
+            if p_key in variables:
+                lp_intermediate_pressures.append(variables.pop(p_key))
+            elif r_key in variables:
+                lp_intermediate_ratios.append(variables.pop(r_key))
+        if lp_intermediate_ratios:
+            p_prev = lp_expander_inlet_p
+            for r in lp_intermediate_ratios:
+                p_i = lp_exp_outlet_p * (p_prev / lp_exp_outlet_p) ** r
+                lp_intermediate_pressures.append(p_i)
+                p_prev = p_i
         if lp_intermediate_pressures:
             lp_exp_data_in["intermediate_pressures"] = lp_intermediate_pressures
 
@@ -508,8 +538,6 @@ def evaluate_cycle(
     }
 
     # First-law analysis
-    # Component-level values — read directly from each component's
-    # energy_analysis dict (computed inside the component functions).
     Q_hp = hp_evaporator["energy_analysis"]["Q_hot"]
     Q_lp = lp_evaporator["energy_analysis"]["Q_hot"]
     Q_pre = preheater["energy_analysis"]["Q_hot"]
@@ -526,7 +554,7 @@ def evaluate_cycle(
         + heat_sink_pump["energy_analysis"]["power"]
     )
     W_in = W_comp + W_aux
-    W_net = W_out - W_comp  # net cycle power (turbines minus WF pumps)
+    W_net = W_out - W_comp
 
     Q_in_max = m_brine * (h_in_hot_brine - source_out_min.h)
     Q_in_max_ambient = m_brine * (h_in_hot_brine - source_out_ambient.h)
@@ -565,19 +593,14 @@ def evaluate_cycle(
     # Cycle-level exergy analysis (2nd Law)
     _aux_pump_names = {"heat_source_pump", "heat_sink_pump"}
 
-    # E_fuel = total exergy dropped by the single brine stream across all
-    # three brine-side HXs (hp_evap → lp_evap → preheater in series).
-    E_fuel = (
+    E_fuel_system = (
         hp_evaporator["exergy_analysis"]["E_fuel"]
         + lp_evaporator["exergy_analysis"]["E_fuel"]
         + preheater["exergy_analysis"]["E_fuel"]
     )
 
-    E_product = energy_analysis["net_system_power"]
-
+    E_product_system = energy_analysis["net_system_power"]
     E_loss_cooler = cooler["exergy_analysis"]["E_product"]
-
-    # Mixer exergy destruction — computed inside the dedicated mixing_process component
     E_D_mixer = mixer["exergy_analysis"]["E_D"]
 
     E_D_total = sum(comp["exergy_analysis"]["E_D"] for comp in components.values())
@@ -587,15 +610,14 @@ def evaluate_cycle(
         if name not in _aux_pump_names
     )
 
-    eta_exergy = E_product / E_fuel if E_fuel != 0 else 0.0
-
-    balance_residual = E_fuel - (W_net + E_D_internal + E_loss_cooler)
+    eta_exergy = E_product_system / E_fuel_system if E_fuel_system != 0 else 0.0
+    balance_residual = E_fuel_system - (W_net + E_D_internal + E_loss_cooler)
 
     exergy_analysis = {
         "T0": T0,
         "p0": p0,
-        "E_fuel": E_fuel,
-        "E_product": E_product,
+        "E_fuel_system": E_fuel_system,
+        "E_product_system": E_product_system,
         "E_loss_cooler": E_loss_cooler,
         "E_D_total": E_D_total,
         "E_D_internal": E_D_internal,
@@ -605,7 +627,6 @@ def evaluate_cycle(
         "balance_residual": balance_residual,
     }
 
-    # Evaluate objective function and constraints
     output = {
         "components": components,
         "energy_analysis": energy_analysis,
@@ -621,7 +642,6 @@ def evaluate_cycle(
         output, constraints
     )
 
-    # Automatically add heat exchanger energy balance residuals as equality constraints
     c_eq_hx = np.array(
         [
             component["energy_balance_residual"]
@@ -632,9 +652,6 @@ def evaluate_cycle(
     if len(c_eq_hx) > 0:
         c_eq = np.concatenate([c_eq, c_eq_hx])
 
-    # Add energy balance residuals to constraint_report so they appear in
-    # the optimization report. The residual is (Q_hot - Q_cold) / Q_hot,
-    # so the equality target is 0.0 and no normalization is needed.
     tol = 1e-4
     for name, component in components.items():
         if component.get("type") == "heat_exchanger" and name != "recuperator":
@@ -681,7 +698,6 @@ def evaluate_cycle(
         "linestyle": "--",
     }
 
-    # Check for unused keys
     utilities.check_for_unused_keys(parameters, "parameters", raise_error=True)
     utilities.check_for_unused_keys(variables, "variables", raise_error=True)
 

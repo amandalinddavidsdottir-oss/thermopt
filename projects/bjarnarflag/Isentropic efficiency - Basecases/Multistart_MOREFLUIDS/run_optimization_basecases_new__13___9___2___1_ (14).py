@@ -114,7 +114,7 @@ warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
 #                  is overwritten. A summary table is printed at the end.
 #                  → Set BATCH_YAML_FILES.
 #
-MODE = "optimize"  # options: sweep | pcond_sweep | k_sensitivity | multistart | parametric_study | batch
+MODE = "multistart"  # options: sweep | pcond_sweep | k_sensitivity | multistart | parametric_study | batch
 
 
 # ────────────────────────────────────────── optimize & sweep ─────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -141,7 +141,7 @@ MODE = "optimize"  # options: sweep | pcond_sweep | k_sensitivity | multistart |
 # CONFIG_FILE = Path(__file__).with_name("Toluene_dp_basecase.yaml")
 
 CONFIG_FILE = Path(__file__).with_name(
-    "Isopentane_recup_basecase_optimized.yaml"
+    "Ethylbenzene_recup_basecase_optimized.yaml"
 )
 
 # ──────────────────────────────────────────── batch ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -149,15 +149,21 @@ CONFIG_FILE = Path(__file__).with_name(
 # List of YAML files to optimize in sequence. Each file is run independently
 # with full post-processing. Results go into each YAML's own output folder.
 BATCH_YAML_FILES = [
-    Path(__file__).with_name("Toluene_simple_basecase_optimized.yaml"),
-    Path(__file__).with_name("Toluene_recup_basecase_optimized.yaml"),
-    Path(__file__).with_name("Toluene_dp_basecase_optimized.yaml"),
-    Path(__file__).with_name("Toluene_dp_recup_basecase_optimized.yaml"),
-    Path(__file__).with_name("Toluene_dp_twosource_basecase_optimized.yaml"),
-    Path(__file__).with_name("Toluene_dp_twosource_recup_basecase_optimized.yaml"),
-    Path(__file__).with_name("Recup_basecase - transcritical_optimized.yaml"),
-    Path(__file__).with_name("Simple_basecase - transcritical_optimized.yaml"),
+    Path(__file__).with_name("Cyclohexane_dp_twosource_recup_basecase_optimized.yaml"),
+    Path(__file__).with_name("Cyclohexane_recup_basecase_optimized.yaml"),
+    Path(__file__).with_name("Isopentane_recup_basecase_optimized.yaml"),
+
 ]
+# BATCH_YAML_FILES = [
+#     Path(__file__).with_name("Toluene_simple_basecase_optimized.yaml"),
+#     Path(__file__).with_name("Toluene_recup_basecase_optimized.yaml"),
+#     Path(__file__).with_name("Toluene_dp_basecase_optimized.yaml"),
+#     Path(__file__).with_name("Toluene_dp_recup_basecase_optimized.yaml"),
+#     Path(__file__).with_name("Toluene_dp_twosource_basecase_optimized.yaml"),
+#     Path(__file__).with_name("Toluene_dp_twosource_recup_basecase_optimized.yaml"),
+#     Path(__file__).with_name("Recup_basecase - transcritical_optimized.yaml"),
+#     Path(__file__).with_name("Simple_basecase - transcritical_optimized.yaml"),
+# ]
 
 # BATCH_YAML_FILES = [
 #     Path(__file__).with_name("Recup_basecase - transcritical_optimized.yaml"),
@@ -166,16 +172,25 @@ BATCH_YAML_FILES = [
 
 # Short display names for each config — used as tab prefixes in comparison_results.xlsx.
 # Order must match BATCH_YAML_FILES exactly.
+
 CONFIG_LABELS = [
-    "Simple ORC",
-    "Recup ORC",
-    "DP single brine",
-    "DP single brine recup",
-    "DP dual brine",
-    "DP dual brine recup",
-    "TC Recup ORC",  # Recup_basecase - transcritical_optimized.yaml
-    "TC Simple ORC",  # Simple_basecase - transcritical_optimized.yaml
+    "CyHex DP dual brine recup",
+    "CyHex Recup ORC",
+    "Isopentane Recup ORC",
 ]
+# CONFIG_LABELS = [
+#     "Simple ORC",
+#     "Recup ORC",
+#     "DP single brine",
+#     "DP single brine recup",
+#     "DP dual brine",
+#     "DP dual brine recup",
+#     "TC Recup ORC",  # Recup_basecase - transcritical_optimized.yaml
+#     "TC Simple ORC",  # Simple_basecase - transcritical_optimized.yaml
+#     "CyHex DP dual brine recup",
+#     "CyHex Recup ORC",
+#     "Isopentane Recup ORC",
+# ]
 
 
 # ── batch output root ────────────────────────────────────────────────────────
@@ -538,12 +553,17 @@ PCOND_FLUIDS = {
 #     (Path(__file__).with_name("Simple_basecase - transcritical.yaml"), None, 250),
 # ]
 
-
 MULTISTART_YAML_FILES = [
-    (Path(__file__).with_name("Cyclohexane_recup_basecase_optimized.yaml"), None, 250),
-    (Path(__file__).with_name("Isopentane_recup_basecase_optimized.yaml"), None, 250),
-    (Path(__file__).with_name("Cyclohexane_dp_twosource_recup_basecase_optimized.yaml"), None, 250),
+    (Path(__file__).with_name("MM_recup_basecase_optimized.yaml"), None, 250),
+    (Path(__file__).with_name("Methanol_recup_basecase_optimized.yaml"), None, 250),
+    (Path(__file__).with_name("Ethylbenzene_recup_basecase_optimized.yaml"), None, 250),
 ]
+
+# MULTISTART_YAML_FILES = [
+#     (Path(__file__).with_name("Cyclohexane_recup_basecase_optimized.yaml"), None, 250),
+#     (Path(__file__).with_name("Isopentane_recup_basecase_optimized.yaml"), None, 250),
+#     (Path(__file__).with_name("Cyclohexane_dp_twosource_recup_basecase_optimized.yaml"), None, 250),
+# ]
 
 # MULTISTART_YAML_FILES = [
 #     Path(__file__).with_name("Toluene_simple_basecase.yaml"),

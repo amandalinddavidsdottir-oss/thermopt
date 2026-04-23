@@ -1181,7 +1181,7 @@ class ThermodynamicCycleProblem(psv.OptimizationProblem):
                                  efficiencies, mass flow rates, energy balance.
         3. component_energy    — Per-component 1st-Law results: power or heat flow,
                                  specific work, mass flow rate for every component.
-        4. cycle_exergy        — Cycle-level 2nd-Law results: E_fuel, E_product,
+        4. cycle_exergy        — Cycle-level 2nd-Law results: E_fuel_system, E_product_system,
                                  E_D_total, eta_exergy, balance residual, dead state.
         5. component_exergy    — Per-component 2nd-Law results: E_D, eta_exergy,
                                  E_fuel (exergy in), E_product (exergy out) for every
@@ -1446,8 +1446,8 @@ class ThermodynamicCycleProblem(psv.OptimizationProblem):
             exergy_parameter_map = {
                 "T0": {"name": "dead_state_temperature", "unit": "K"},
                 "p0": {"name": "dead_state_pressure", "unit": "Pa"},
-                "E_fuel": {"name": "E_fuel", "unit": "W"},
-                "E_product": {"name": "E_product", "unit": "W"},
+                "E_fuel_system": {"name": "E_fuel_system", "unit": "W"},
+                "E_product_system": {"name": "E_product_system", "unit": "W"},
                 "E_loss_cooler": {"name": "E_loss_cooler", "unit": "W"},
                 "E_D_total": {"name": "E_D_total", "unit": "W"},
                 "E_D_internal": {"name": "E_D_internal", "unit": "W"},

@@ -182,10 +182,25 @@ def evaluate_cycle(
         if "RPM" in parameters["hp_expander"]:
             hp_exp_data_in["RPM"] = parameters["hp_expander"].pop("RPM")
         hp_intermediate_pressures = []
+        hp_intermediate_ratios = []
         for i in range(1, 10):
-            key = f"hp_expander_intermediate_pressure_{i}"
-            if key in variables:
-                hp_intermediate_pressures.append(variables.pop(key))
+            p_key = f"hp_expander_intermediate_pressure_{i}"
+            r_key = f"hp_expander_intermediate_ratio_{i}"
+            if p_key in variables and r_key in variables:
+                raise ValueError(
+                    f"Both '{p_key}' and '{r_key}' are declared as design "
+                    f"variables. Use exactly one parameterization per stage."
+                )
+            if p_key in variables:
+                hp_intermediate_pressures.append(variables.pop(p_key))
+            elif r_key in variables:
+                hp_intermediate_ratios.append(variables.pop(r_key))
+        if hp_intermediate_ratios:
+            p_prev = hp_expander_inlet_p
+            for r in hp_intermediate_ratios:
+                p_i = hp_exp_outlet_p * (p_prev / hp_exp_outlet_p) ** r
+                hp_intermediate_pressures.append(p_i)
+                p_prev = p_i
         if hp_intermediate_pressures:
             hp_exp_data_in["intermediate_pressures"] = hp_intermediate_pressures
 
@@ -246,10 +261,25 @@ def evaluate_cycle(
         if "RPM" in parameters["lp_expander"]:
             lp_exp_data_in["RPM"] = parameters["lp_expander"].pop("RPM")
         lp_intermediate_pressures = []
+        lp_intermediate_ratios = []
         for i in range(1, 10):
-            key = f"lp_expander_intermediate_pressure_{i}"
-            if key in variables:
-                lp_intermediate_pressures.append(variables.pop(key))
+            p_key = f"lp_expander_intermediate_pressure_{i}"
+            r_key = f"lp_expander_intermediate_ratio_{i}"
+            if p_key in variables and r_key in variables:
+                raise ValueError(
+                    f"Both '{p_key}' and '{r_key}' are declared as design "
+                    f"variables. Use exactly one parameterization per stage."
+                )
+            if p_key in variables:
+                lp_intermediate_pressures.append(variables.pop(p_key))
+            elif r_key in variables:
+                lp_intermediate_ratios.append(variables.pop(r_key))
+        if lp_intermediate_ratios:
+            p_prev = lp_expander_inlet_p
+            for r in lp_intermediate_ratios:
+                p_i = lp_exp_outlet_p * (p_prev / lp_exp_outlet_p) ** r
+                lp_intermediate_pressures.append(p_i)
+                p_prev = p_i
         if lp_intermediate_pressures:
             lp_exp_data_in["intermediate_pressures"] = lp_intermediate_pressures
 
@@ -617,16 +647,16 @@ def evaluate_cycle(
     # Cycle-level exergy analysis (2nd Law)
     _aux_pump_names = {"heat_source_pump_hp", "heat_source_pump_lp", "heat_sink_pump"}
 
-    # E_fuel = total exergy dropped by both brine streams across all brine HXs.
+    # E_fuel_system = total exergy dropped by both brine streams across all brine HXs.
     # HP brine passes through hp_evaporator only.
     # LP brine passes through lp_evaporator → preheater in series.
-    E_fuel = (
+    E_fuel_system = (
         hp_evaporator["exergy_analysis"]["E_fuel"]
         + lp_evaporator["exergy_analysis"]["E_fuel"]
         + preheater["exergy_analysis"]["E_fuel"]
     )
 
-    E_product = energy_analysis["net_system_power"]
+    E_product_system = energy_analysis["net_system_power"]
 
     E_loss_cooler = cooler["exergy_analysis"]["E_product"]
 
@@ -640,15 +670,15 @@ def evaluate_cycle(
         if name not in _aux_pump_names
     )
 
-    eta_exergy = E_product / E_fuel if E_fuel != 0 else 0.0
+    eta_exergy = E_product_system / E_fuel_system if E_fuel_system != 0 else 0.0
 
-    balance_residual = E_fuel - (W_net + E_D_internal + E_loss_cooler)
+    balance_residual = E_fuel_system - (W_net + E_D_internal + E_loss_cooler)
 
     exergy_analysis = {
         "T0": T0,
         "p0": p0,
-        "E_fuel": E_fuel,
-        "E_product": E_product,
+        "E_fuel_system": E_fuel_system,
+        "E_product_system": E_product_system,
         "E_loss_cooler": E_loss_cooler,
         "E_D_total": E_D_total,
         "E_D_internal": E_D_internal,
